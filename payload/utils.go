@@ -22,7 +22,7 @@ const (
 	DataFrameResponseStatusCodeKOK            = 200
 	DataFrameResponseStatusCodeKInternalError = 500
 
-	BotMessageCallbackTopic = "bot_got_msg" //机器人消息统一回调topic
+	BotMessageCallbackTopic = "/v1.0/im/bot/messages/get" //机器人消息统一回调topic
 )
 
 func GenerateMessageId(prefix string) string {

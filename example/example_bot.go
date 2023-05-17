@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/utils"
+	"net/http"
+	"time"
 )
 
 /**
@@ -27,13 +33,43 @@ func OnBotCallback(ctx context.Context, df *payload.DataFrame) (*payload.DataFra
 	return frameResp, nil
 }
 
+func OnChatReceive(ctx context.Context, data *chatbot.BotCallbackDataModel) error {
+	requestBody := map[string]interface{}{
+		"msgtype": "text",
+		"text": map[string]interface{}{
+			"content": fmt.Sprintf("msg received: [%s]", data.Text.Content),
+		},
+	}
+
+	requestJsonBody, _ := json.Marshal(requestBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, data.SessionWebhook, bytes.NewReader(requestJsonBody))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "*/*")
+
+	httpClient := &http.Client{
+		Transport: http.DefaultTransport,
+		Timeout:   5 * time.Second, //设置超时，包含connection时间、任意重定向时间、读取response body时间
+	}
+
+	_, err = httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func RunBotListener() {
 	logger.SetLogger(logger.NewStdTestLogger())
 
 	cli := client.NewStreamClient(
 		client.WithAppCredential(client.NewAppCredentialConfig("your-client-id", "your-client-secret")),
 		client.WithUserAgent(client.NewDingtalkGoSDKUserAgent()),
-		client.WithSubscription(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, OnBotCallback),
+		client.WithSubscription(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, chatbot.NewDefaultChatBotFrameHandler(OnChatReceive).OnEventReceived),
 	)
 
 	err := cli.Start(context.Background())
