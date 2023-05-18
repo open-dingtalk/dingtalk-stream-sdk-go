@@ -40,7 +40,7 @@ go run example/*.go -client_id "your-client-id" -client_secret "your-client-secr
 ```
 
 测试效果：
-![calcbot](https://img.alicdn.com/imgextra/i1/O1CN01jmTpgE245lxmSivNC_!!6000000007340-0-tps-1752-772.jpg)
+![calcbot](https://img.alicdn.com/imgextra/i1/O1CN0124eJfc29J7aK1Jtzu_!!6000000008046-0-tps-1740-762.jpg)
 
 ### 事件订阅切换到 Stream 模式（可选）
 
