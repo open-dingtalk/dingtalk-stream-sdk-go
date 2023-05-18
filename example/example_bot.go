@@ -63,11 +63,11 @@ func OnChatReceive(ctx context.Context, data *chatbot.BotCallbackDataModel) erro
 	return nil
 }
 
-func RunBotListener() {
+func RunBotListener(clientId, clientSecret string) {
 	logger.SetLogger(logger.NewStdTestLogger())
 
 	cli := client.NewStreamClient(
-		client.WithAppCredential(client.NewAppCredentialConfig("your-client-id", "your-client-secret")),
+		client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)),
 		client.WithUserAgent(client.NewDingtalkGoSDKUserAgent()),
 		client.WithSubscription(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, chatbot.NewDefaultChatBotFrameHandler(OnChatReceive).OnEventReceived),
 	)

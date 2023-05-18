@@ -13,13 +13,13 @@ import (
  * @Date 2023/3/22 18:30
  */
 
-func RunEventListener() {
+func RunEventListener(clientId, clientSecret string) {
 	logger.SetLogger(logger.NewStdTestLogger())
 
 	eventHandler := event.NewDefaultEventFrameHandler(event.EventHandlerDoNothing)
 
 	cli := client.NewStreamClient(
-		client.WithAppCredential(client.NewAppCredentialConfig("your-client-id", "your-client-secret")),
+		client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)),
 		client.WithUserAgent(client.NewDingtalkGoSDKUserAgent()),
 		client.WithSubscription(utils.SubscriptionTypeKEvent, "*", eventHandler.OnEventReceived),
 	)
