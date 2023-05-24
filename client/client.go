@@ -343,3 +343,26 @@ func (cli *StreamClient) SendDataFrameResponse(ctx context.Context, resp *payloa
 	}
 	return cli.conn.WriteJSON(resp)
 }
+
+// 通用注册函数
+func (cli *StreamClient) RegisterRouter(stype, stopic string, frameHandler handler.IFrameHandler) {
+	if cli.subscriptions == nil {
+		cli.subscriptions = make(map[string]map[string]handler.IFrameHandler)
+	}
+
+	if _, ok := cli.subscriptions[stype]; !ok {
+		cli.subscriptions[stype] = make(map[string]handler.IFrameHandler)
+	}
+
+	cli.subscriptions[stype][stopic] = frameHandler
+}
+
+// callback类型注册函数
+func (cli *StreamClient) RegisterCallbackRouter(topic string, frameHandler handler.IFrameHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKCallback, topic, frameHandler)
+}
+
+// 事件类型的注册函数
+func (cli *StreamClient) RegisterEventRouter(topic string, frameHandler handler.IFrameHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKEvent, topic, frameHandler)
+}

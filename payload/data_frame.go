@@ -24,7 +24,7 @@ type DataFrame struct {
 	SpecVersion string          `json:"specVersion"`
 	Type        string          `json:"type"`
 	Time        int64           `json:"time"`
-	Headers     DataFrameHeader `json:"headers""`
+	Headers     DataFrameHeader `json:"headers"`
 	Data        string          `json:"data"`
 }
 

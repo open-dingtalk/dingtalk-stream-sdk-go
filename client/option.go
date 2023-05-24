@@ -23,15 +23,7 @@ func WithAppCredential(cred *AppCredentialConfig) ClientOption {
 
 func WithSubscription(stype, stopic string, frameHandler handler.IFrameHandler) ClientOption {
 	return func(c *StreamClient) {
-		if c.subscriptions == nil {
-			c.subscriptions = make(map[string]map[string]handler.IFrameHandler)
-		}
-
-		if _, ok := c.subscriptions[stype]; !ok {
-			c.subscriptions[stype] = make(map[string]handler.IFrameHandler)
-		}
-
-		c.subscriptions[stype][stopic] = frameHandler
+		c.RegisterRouter(stype, stopic, frameHandler)
 	}
 }
 
