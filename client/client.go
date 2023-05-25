@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
@@ -146,20 +147,29 @@ func (cli *StreamClient) processDataFrame(rawData []byte) {
 		return
 	}
 
+	var dataAck *payload.DataFrameResponse
 	frameHandler, err := cli.GetHandler(dataFrame.Type, dataFrame.GetTopic())
-	if err != nil {
-		logger.GetLogger().Errorf("connection processDataFrame unregistered handler: type=[%s] topic=[%s]", dataFrame.Type, dataFrame.GetTopic())
-		return
-	}
+	if err != nil || frameHandler == nil {
+		// 没有注册handler，返回404
+		dataAck = payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKHandlerNotFound)
+	} else {
+		dataAck, err = frameHandler(context.Background(), dataFrame)
 
-	dataAck, err := frameHandler(context.Background(), dataFrame)
-
-	if dataAck == nil && err != nil {
-		dataAck = payload.NewErrorDataFrameResponse(dataFrame.GetMessageId(), err)
+		if err != nil && dataAck == nil {
+			dataAck = payload.NewErrorDataFrameResponse(err)
+		}
 	}
 
 	if dataAck == nil {
-		return
+		dataAck = payload.NewSuccessDataFrameResponse()
+	}
+
+	if dataAck.GetHeader(payload.DataFrameHeaderKMessageId) == "" {
+		dataAck.SetHeader(payload.DataFrameHeaderKMessageId, dataFrame.GetMessageId())
+	}
+
+	if dataAck.GetHeader(payload.DataFrameHeaderKContentType) == "" {
+		dataAck.SetHeader(payload.DataFrameHeaderKContentType, payload.DataFrameContentTypeKJson)
 	}
 
 	errSend := cli.SendDataFrameResponse(context.Background(), dataAck)
@@ -362,7 +372,17 @@ func (cli *StreamClient) RegisterCallbackRouter(topic string, frameHandler handl
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, topic, frameHandler)
 }
 
+// 聊天机器人的注册函数
+func (cli *StreamClient) RegisterChatBotCallbackRouter(messageHandler chatbot.IChatBotMessageHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, chatbot.NewDefaultChatBotFrameHandler(messageHandler).OnEventReceived)
+}
+
 // 事件类型的注册函数
 func (cli *StreamClient) RegisterEventRouter(topic string, frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKEvent, topic, frameHandler)
+}
+
+// 事件类型的注册函数
+func (cli *StreamClient) RegisterAllEventRouter(frameHandler handler.IFrameHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKEvent, "*", frameHandler)
 }

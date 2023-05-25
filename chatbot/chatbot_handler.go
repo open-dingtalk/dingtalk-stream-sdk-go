@@ -11,41 +11,35 @@ import (
  * @Date 2023/3/22 18:30
  */
 
-type IMessageHandler func(c context.Context, data *BotCallbackDataModel) error
+type IChatBotMessageHandler func(c context.Context, data *BotCallbackDataModel) ([]byte, error)
 
 type DefaultChatBotFrameHandler struct {
-	defaultHandler IMessageHandler
+	defaultHandler IChatBotMessageHandler
 }
 
-func NewDefaultChatBotFrameHandler(defaultHandler IMessageHandler) *DefaultChatBotFrameHandler {
+func NewDefaultChatBotFrameHandler(defaultHandler IChatBotMessageHandler) *DefaultChatBotFrameHandler {
 	return &DefaultChatBotFrameHandler{
 		defaultHandler: defaultHandler,
 	}
 }
 
 func (h *DefaultChatBotFrameHandler) OnEventReceived(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
-	frameResp := &payload.DataFrameResponse{
-		Code: 200,
-		Headers: payload.DataFrameHeader{
-			payload.DataFrameHeaderKContentType: payload.DataFrameContentTypeKJson,
-			payload.DataFrameHeaderKMessageId:   df.GetMessageId(),
-		},
-		Message: "ok",
-		Data:    "",
-	}
-
 	msgData := &BotCallbackDataModel{}
 	err := json.Unmarshal([]byte(df.Data), msgData)
 	if err != nil {
 		return nil, err
 	}
 
-	if h.defaultHandler != nil {
-		err = h.defaultHandler(ctx, msgData)
-		if err != nil {
-			return nil, err
-		}
+	if h.defaultHandler == nil {
+		return payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKHandlerNotFound), nil
 	}
 
+	data, err := h.defaultHandler(ctx, msgData)
+	if err != nil {
+		return nil, err
+	}
+
+	frameResp := payload.NewSuccessDataFrameResponse()
+	frameResp.SetData(string(data))
 	return frameResp, nil
 }

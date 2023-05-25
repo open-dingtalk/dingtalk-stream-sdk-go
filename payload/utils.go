@@ -19,8 +19,9 @@ const (
 	DataFrameContentTypeKJson   = "application/json"
 	DataFrameContentTypeKBase64 = "base64String"
 
-	DataFrameResponseStatusCodeKOK            = 200
-	DataFrameResponseStatusCodeKInternalError = 500
+	DataFrameResponseStatusCodeKOK              = 200
+	DataFrameResponseStatusCodeKInternalError   = 500
+	DataFrameResponseStatusCodeKHandlerNotFound = 404
 
 	BotMessageCallbackTopic = "/v1.0/im/bot/messages/get" //机器人消息统一回调topic
 )

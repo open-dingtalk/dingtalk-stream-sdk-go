@@ -92,6 +92,57 @@ type DataFrameResponse struct {
 	Data    string          `json:"data"`
 }
 
+func NewDataFrameResponse(code int) *DataFrameResponse {
+	return &DataFrameResponse{
+		Code:    code,
+		Headers: DataFrameHeader{},
+		Message: "",
+		Data:    "",
+	}
+}
+
+func NewSuccessDataFrameResponse() *DataFrameResponse {
+	return NewDataFrameResponse(DataFrameResponseStatusCodeKOK)
+}
+
+func (r *DataFrameResponse) SetHeader(key, value string) {
+	if r == nil {
+		return
+	}
+
+	r.Headers.Set(key, value)
+}
+
+func (r *DataFrameResponse) GetHeader(key string) string {
+	if r == nil {
+		return ""
+	}
+
+	return r.Headers.Get(key)
+}
+
+func (r *DataFrameResponse) SetData(data string) {
+	if r == nil {
+		return
+	}
+
+	r.Data = data
+}
+
+func (r *DataFrameResponse) SetJson(dataModel interface{}) error {
+	if r == nil {
+		return nil
+	}
+
+	data, err := json.Marshal(dataModel)
+	if err != nil {
+		return err
+	}
+
+	r.Data = string(data)
+	return nil
+}
+
 func (df *DataFrameResponse) Encode() []byte {
 	if df == nil {
 		return nil
@@ -120,22 +171,19 @@ func NewDataFrameAckPong(messageId string) *DataFrameResponse {
 			DataFrameHeaderKMessageId:   messageId,
 		},
 		Message: "ok",
-		Data:    "", //TODO data内容暂留空
+		Data:    "",
 	}
 }
 
-func NewErrorDataFrameResponse(messageId string, err error) *DataFrameResponse {
+func NewErrorDataFrameResponse(err error) *DataFrameResponse {
 	if err == nil {
 		return nil
 	}
 
 	return &DataFrameResponse{
-		Code: 400, //TODO errorcode 细化
-		Headers: DataFrameHeader{
-			DataFrameHeaderKContentType: DataFrameContentTypeKJson,
-			DataFrameHeaderKMessageId:   messageId,
-		},
+		Code:    DataFrameResponseStatusCodeKInternalError,
+		Headers: DataFrameHeader{},
 		Message: err.Error(),
-		Data:    "", //TODO data内容暂留空
+		Data:    "",
 	}
 }

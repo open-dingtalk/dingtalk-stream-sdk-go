@@ -71,7 +71,7 @@ func TestNewDataFrameAckPong(t *testing.T) {
 }
 
 func TestNewErrorDataFrameResponse(t *testing.T) {
-	errResp := NewErrorDataFrameResponse("messageId", errors.New("error"))
+	errResp := NewErrorDataFrameResponse(errors.New("error"))
 	assert.NotNil(t, errResp)
 	assert.Equal(t, "error", errResp.Message)
 }
