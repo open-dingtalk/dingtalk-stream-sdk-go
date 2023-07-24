@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/clientV2"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/event"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
@@ -47,27 +46,32 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 
 // go run example/*.go --client_id your-client-id --client_secret your-client-secret
 func main() {
-	var clientId, clientSecret string
-	flag.StringVar(&clientId, "client_id", "", "your-client-id")
-	flag.StringVar(&clientSecret, "client_secret", "", "your-client-secret")
-
-	flag.Parse()
-
-	logger.SetLogger(logger.NewStdTestLogger())
-
-	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
-
-	//注册事件类型的处理函数
-	cli.RegisterAllEventRouter(OnEventReceived)
-	//注册callback类型的处理函数
-	cli.RegisterChatBotCallbackRouter(OnChatBotMessageReceived)
-
-	err := cli.Start(context.Background())
-	if err != nil {
-		panic(err)
+	e := clientV2.
+		NewBuilder().
+		PreEnv().
+		SetCredential(&clientV2.AuthClientCredential{ClientId: "dinggfdihxaads6x4hkl", ClientSecret: "Spa6oTv-wgj85WkkdhHKFLadjqStsJOWabg6ZMGXHiPXR48T0a5fxSEaoCW134Ad"}).
+		RegisterCallbackHandler("/v1.0/im/bot/messages/get", HandMyBot).
+		Build().
+		Start(context.Background())
+	if e != nil {
+		println("启动失败", e)
+		return
 	}
 
-	defer cli.Close()
-
+	println("程序启动")
 	select {}
+
+	println("程序结束")
+
+}
+
+func HandMyBot(data *chatbot.BotCallbackDataModel) (string, error) {
+	fmt.Println("收到数据:", data)
+	return "hello ", nil
+}
+
+type Result struct {
+	Name string `json:"name"`
+
+	Age int `json:"value"`
 }

@@ -1,9 +1,9 @@
 package event
 
 import (
-	"github.com/stretchr/testify/assert"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/utils"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 

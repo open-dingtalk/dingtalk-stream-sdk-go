@@ -18,6 +18,7 @@ type ConnectionEndpointRequest struct {
 	ClientSecret  string               `json:"clientSecret"` //自建应用appSecret; 三方应用suiteSecret
 	Subscriptions []*SubscriptionModel `json:"subscriptions"`
 	UserAgent     string               `json:"ua"`
+	LocalIp       string               `json:"localIp"`
 }
 
 // 长连接接入点参数
