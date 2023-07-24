@@ -58,20 +58,10 @@ func main() {
 		return
 	}
 
-	println("程序启动")
 	select {}
-
-	println("程序结束")
-
 }
 
-func HandMyBot(data *chatbot.BotCallbackDataModel) (string, error) {
+func HandMyBot(data *chatbot.BotCallbackDataModel) (error, *chatbot.BotCallbackRespModel) {
 	fmt.Println("收到数据:", data)
-	return "hello ", nil
-}
-
-type Result struct {
-	Name string `json:"name"`
-
-	Age int `json:"value"`
+	return nil, &chatbot.BotCallbackRespModel{}
 }

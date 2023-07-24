@@ -51,7 +51,10 @@ func BuildFrameHandler(callFunc interface{}) *CallbackFrameHandler {
 
 	handlerType := reflect.TypeOf(callFunc)
 	if handlerType.NumIn() != 1 {
-		panic(errors.New("illegal callback handler"))
+		panic(errors.New("illegal callback handler, the number of parameters must be 1"))
+	}
+	if handlerType.NumOut() > 2 {
+		panic(errors.New("illegal callback handler, the number of result cannot exceed 2"))
 	}
 	return &CallbackFrameHandler{callBackHandler: callFunc, parameterType: handlerType.In(0)}
 }
@@ -68,17 +71,58 @@ func (h *CallbackFrameHandler) handle(c context.Context, df *payload.DataFrame) 
 		return nil, e
 	}
 
-	callback := reflect.ValueOf(h.callBackHandler)
+	callbackFunc := reflect.ValueOf(h.callBackHandler)
 	input := []reflect.Value{reflect.ValueOf(value)}
-	result := callback.Call(input)
-	if !result[1].IsNil() {
-		return nil, result[1].Interface().(error)
+	invokeResult := callbackFunc.Call(input)
+
+	resultMeta := ParseResultMeta(h.callBackHandler)
+	if e = resultMeta.getError(invokeResult); e != nil {
+		return nil, e
 	}
 	response := payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKOK)
 	callbackPayload := &CallbackPayload{}
-	callbackPayload.Response = result[0].Interface()
+	callbackPayload.Response = resultMeta.getResult(invokeResult)
 	if e = response.SetJson(callbackPayload); e != nil {
 		return nil, e
 	}
 	return response, nil
+}
+
+type ResultMeta struct {
+	ErrorIndex int
+
+	ResultIndex int
+}
+
+func ParseResultMeta(callbackHandler interface{}) *ResultMeta {
+	result := &ResultMeta{ErrorIndex: -1, ResultIndex: -1}
+	funcType := reflect.TypeOf(callbackHandler)
+	for i := 0; i < funcType.NumOut(); i++ {
+		if funcType.Out(i).Kind() == reflect.Interface && funcType.Out(i).String() == "error" {
+			result.ErrorIndex = i
+		} else {
+			result.ResultIndex = i
+		}
+	}
+	return result
+}
+
+func (r *ResultMeta) getError(value []reflect.Value) error {
+	if r.ErrorIndex >= 0 {
+		errorValue := value[r.ErrorIndex]
+		if errorValue.IsNil() {
+			return nil
+		}
+		return value[r.ErrorIndex].Interface().(error)
+	} else {
+		return nil
+	}
+}
+
+func (r *ResultMeta) getResult(value []reflect.Value) any {
+	if r.ResultIndex >= 0 {
+		return value[r.ResultIndex].Interface()
+	} else {
+		return nil
+	}
 }

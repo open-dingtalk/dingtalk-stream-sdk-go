@@ -33,4 +33,8 @@ type BotCallbackDataModel struct {
 	SessionWebhook            string                       `json:"sessionWebhook"`
 	Text                      BotCallbackDataTextModel     `json:"text"`
 	Msgtype                   string                       `json:"msgtype"`
+	Content                   map[string]any               `json:"content"`
+}
+
+type BotCallbackRespModel struct {
 }
