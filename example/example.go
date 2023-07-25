@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/clientV2"
@@ -46,18 +47,27 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 
 // go run example/*.go --client_id your-client-id --client_secret your-client-secret
 func main() {
+	var clientId, clientSecret string
+	flag.StringVar(&clientId, "client_id", "", "your-client-id")
+	flag.StringVar(&clientSecret, "client_secret", "", "your-client-secret")
+
+	flag.Parse()
+
+	logger.SetLogger(logger.NewStdTestLogger())
+
 	logger.SetLogger(logger.NewStdTestLogger())
 	e := clientV2.
 		NewBuilder().
 		//配置日志
 		Logger(logger.NewStdTestLogger()).
-		Credential(&clientV2.AuthClientCredential{ClientId: "put your app clientId here", ClientSecret: "put your app clientSecret here"}).
+		Credential(&clientV2.AuthClientCredential{ClientId: clientId, ClientSecret: clientSecret}).
 		//开放平台事件
 		RegisterAllEventHandler(func(event *clientV2.GenericOpenDingTalkEvent) clientV2.EventStatus {
 			println("receive event ", event.Data)
 			//成功返回 clientV2.EventStatusSuccess,失败返回clientV2.EventStatusLater
 			return clientV2.EventStatusSuccess
 		}).
+		RegisterCallbackHandler(payload.BotMessageCallbackTopic, HandMyBot).
 		Build().
 		Start(context.Background())
 	if e != nil {
