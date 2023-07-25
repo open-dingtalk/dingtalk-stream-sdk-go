@@ -9,19 +9,19 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
 
-type EventAckStatus int
+type EventStatus string
 
 type EventHeader string
 
 const (
-	SUCCESS EventAckStatus = 1
-	LAGER   EventAckStatus = 2
+	EventStatusSuccess EventStatus = "SUCCESS"
+	EventStatusLater   EventStatus = "LATER"
 
-	EVENT_ID   string = "eventId"
-	EVENT_TIME string = "eventBornTime"
-	CORP_ID    string = "eventCorpId"
-	APP_ID     string = "eventUnifiedAppId"
-	EVENT_TYPE string = "eventType"
+	EventId   string = "eventId"
+	EventTime string = "eventBornTime"
+	CorpId    string = "eventCorpId"
+	AppId     string = "eventUnifiedAppId"
+	EventType string = "eventType"
 )
 
 type GenericOpenDingTalkEvent struct {
@@ -34,12 +34,12 @@ type GenericOpenDingTalkEvent struct {
 }
 
 type AckPayload struct {
-	Status EventAckStatus `json:"status"`
+	Status EventStatus `json:"status"`
 
 	Message string `json:"message"`
 }
 
-type GenericEventHandler func(event *GenericOpenDingTalkEvent) EventAckStatus
+type GenericEventHandler func(event *GenericOpenDingTalkEvent) EventStatus
 
 func EventFacade(handler GenericEventHandler) handler.IFrameHandler {
 	return func(c context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
@@ -47,11 +47,11 @@ func EventFacade(handler GenericEventHandler) handler.IFrameHandler {
 			return nil, errors.New("empty data frame")
 		}
 		event := &GenericOpenDingTalkEvent{}
-		event.EventId = df.GetHeader(EVENT_ID)
-		event.EventBornTime = df.GetHeader(EVENT_TIME)
-		event.EventUnifiedAppId = df.GetHeader(APP_ID)
-		event.EventType = df.GetHeader(EVENT_TYPE)
-		event.EventCorpId = df.GetHeader(CORP_ID)
+		event.EventId = df.GetHeader(EventId)
+		event.EventBornTime = df.GetHeader(EventTime)
+		event.EventUnifiedAppId = df.GetHeader(AppId)
+		event.EventType = df.GetHeader(EventType)
+		event.EventCorpId = df.GetHeader(CorpId)
 		data := make(map[string]any, 1)
 		if e := json.Unmarshal([]byte(df.Data), &data); e != nil {
 			return nil, e
@@ -67,11 +67,11 @@ func EventFacade(handler GenericEventHandler) handler.IFrameHandler {
 	}
 }
 
-func safeInvokeEventHandler(event *GenericOpenDingTalkEvent, handler GenericEventHandler) (status EventAckStatus) {
+func safeInvokeEventHandler(event *GenericOpenDingTalkEvent, handler GenericEventHandler) (status EventStatus) {
 	defer func() {
 		if e := recover(); e != nil {
 			logger.GetLogger().Errorf("failed to invoke event handler, error=[%s]", e)
-			status = LAGER
+			status = EventStatusLater
 		}
 	}()
 	return handler(event)

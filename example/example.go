@@ -48,13 +48,21 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 func main() {
 	e := clientV2.
 		NewBuilder().
-		PreEnv().
-		Credential(&clientV2.AuthClientCredential{ClientId: "put your clientId", ClientSecret: "put your clientSecret"}).
+		Credential(&clientV2.AuthClientCredential{ClientId: "put your app clientId", ClientSecret: "put your app clientSecret"}).
+		//监听机器人回调
 		RegisterCallbackHandler("/v1.0/im/bot/messages/get", HandMyBot).
+		//开放平台事件
+		RegisterAllEventHandler(func(event *clientV2.GenericOpenDingTalkEvent) clientV2.EventStatus {
+			println("收到消息", event.EventId)
+			println("收到消息", event.EventType)
+			println("收到消息", event.EventCorpId)
+			println("收到消息", event.EventUnifiedAppId)
+			return clientV2.EventStatusSuccess
+		}).
 		Build().
 		Start(context.Background())
 	if e != nil {
-		println("启动失败", e)
+		println("启动失败", e.Error())
 		return
 	}
 
