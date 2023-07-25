@@ -95,7 +95,7 @@ func (cli *StreamClient) Start(ctx context.Context) error {
 	cli.conn = conn
 	cli.sessionId = endpoint.Ticket
 
-	logger.GetLogger().Infof("connect success, sessionId=[%s]", cli.sessionId)
+	logger.GetLogger().Infof("connect success, connectionId=[%s]", cli.sessionId)
 
 	go cli.processLoop()
 

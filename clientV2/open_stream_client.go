@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/utils"
 )
 
@@ -33,10 +34,16 @@ type OpenDingTalkStreamClientBuilder struct {
 	credential           *AuthClientCredential
 	eventHandler         GenericEventHandler
 	callbackSubscription map[string]interface{}
+	logger               logger.ILogger
 }
 
 func (b *OpenDingTalkStreamClientBuilder) PreEnv() *OpenDingTalkStreamClientBuilder {
 	b.openApiHost = "https://pre-api.dingtalk.com"
+	return b
+}
+
+func (b *OpenDingTalkStreamClientBuilder) Logger(customLogger logger.ILogger) *OpenDingTalkStreamClientBuilder {
+	b.logger = customLogger
 	return b
 }
 
@@ -73,6 +80,9 @@ func (b *OpenDingTalkStreamClientBuilder) Build() OpenDingTalkClient {
 		for k, v := range b.callbackSubscription {
 			options = append(options, client.WithSubscription(utils.SubscriptionTypeKCallback, k, CallbackFacade(v)))
 		}
+	}
+	if b.logger != nil {
+		logger.SetLogger(b.logger)
 	}
 	c := client.NewStreamClient(options...)
 	return &OpenDingTalkStreamClient{client: c}

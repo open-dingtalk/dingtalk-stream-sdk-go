@@ -46,23 +46,22 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 
 // go run example/*.go --client_id your-client-id --client_secret your-client-secret
 func main() {
+	logger.SetLogger(logger.NewStdTestLogger())
 	e := clientV2.
 		NewBuilder().
-		Credential(&clientV2.AuthClientCredential{ClientId: "put your app clientId", ClientSecret: "put your app clientSecret"}).
-		//监听机器人回调
-		RegisterCallbackHandler("/v1.0/im/bot/messages/get", HandMyBot).
+		//配置日志
+		Logger(logger.NewStdTestLogger()).
+		Credential(&clientV2.AuthClientCredential{ClientId: "put your app clientId here", ClientSecret: "put your app clientSecret here"}).
 		//开放平台事件
 		RegisterAllEventHandler(func(event *clientV2.GenericOpenDingTalkEvent) clientV2.EventStatus {
-			println("收到消息", event.EventId)
-			println("收到消息", event.EventType)
-			println("收到消息", event.EventCorpId)
-			println("收到消息", event.EventUnifiedAppId)
+			println("receive event ", event.Data)
+			//成功返回 clientV2.EventStatusSuccess,失败返回clientV2.EventStatusLater
 			return clientV2.EventStatusSuccess
 		}).
 		Build().
 		Start(context.Background())
 	if e != nil {
-		println("启动失败", e.Error())
+		println("failed to start stream client", e.Error())
 		return
 	}
 
