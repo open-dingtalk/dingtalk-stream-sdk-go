@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
 
@@ -24,12 +25,12 @@ const (
 )
 
 type GenericOpenDingTalkEvent struct {
-	EventId           string `json:"eventId"`
-	EventBornTime     string `json:"eventBornTime"`
-	EventCorpId       string `json:"eventCorpId"`
-	EventType         string `json:"eventType"`
-	EventUnifiedAppId string `json:"eventUnifiedAppId"`
-	Data              any    `json:"data"`
+	EventId           string         `json:"eventId"`
+	EventBornTime     string         `json:"eventBornTime"`
+	EventCorpId       string         `json:"eventCorpId"`
+	EventType         string         `json:"eventType"`
+	EventUnifiedAppId string         `json:"eventUnifiedAppId"`
+	Data              map[string]any `json:"data"`
 }
 
 type AckPayload struct {
@@ -51,12 +52,12 @@ func EventFacade(handler GenericEventHandler) handler.IFrameHandler {
 		event.EventUnifiedAppId = df.GetHeader(APP_ID)
 		event.EventType = df.GetHeader(EVENT_TYPE)
 		event.EventCorpId = df.GetHeader(CORP_ID)
-		data := make(map[string]any)
-		if e := json.Unmarshal([]byte(df.Data), data); e != nil {
+		data := make(map[string]any, 1)
+		if e := json.Unmarshal([]byte(df.Data), &data); e != nil {
 			return nil, e
 		}
 		event.Data = data
-		status := handler(event)
+		status := safeInvokeEventHandler(event, handler)
 		ack := &AckPayload{Status: status}
 		response := payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKOK)
 		if e := response.SetJson(ack); e != nil {
@@ -64,4 +65,14 @@ func EventFacade(handler GenericEventHandler) handler.IFrameHandler {
 		}
 		return response, nil
 	}
+}
+
+func safeInvokeEventHandler(event *GenericOpenDingTalkEvent, handler GenericEventHandler) (status EventAckStatus) {
+	defer func() {
+		if e := recover(); e != nil {
+			logger.GetLogger().Errorf("failed to invoke event handler, error=[%s]", e)
+			status = LAGER
+		}
+	}()
+	return handler(event)
 }

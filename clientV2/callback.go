@@ -65,7 +65,7 @@ type CallbackFrameHandler struct {
 	callBackHandler interface{}
 }
 
-func (h *CallbackFrameHandler) handle(c context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
+func (h *CallbackFrameHandler) handle(context context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
 	value, e := h.unMarshaller(df.Data)
 	if e != nil {
 		return nil, e

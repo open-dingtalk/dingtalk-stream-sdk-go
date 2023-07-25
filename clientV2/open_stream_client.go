@@ -40,7 +40,7 @@ func (b *OpenDingTalkStreamClientBuilder) PreEnv() *OpenDingTalkStreamClientBuil
 	return b
 }
 
-func (b *OpenDingTalkStreamClientBuilder) SetCredential(credential *AuthClientCredential) *OpenDingTalkStreamClientBuilder {
+func (b *OpenDingTalkStreamClientBuilder) Credential(credential *AuthClientCredential) *OpenDingTalkStreamClientBuilder {
 	b.credential = credential
 	return b
 }

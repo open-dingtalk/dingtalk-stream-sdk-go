@@ -49,7 +49,7 @@ func main() {
 	e := clientV2.
 		NewBuilder().
 		PreEnv().
-		SetCredential(&clientV2.AuthClientCredential{ClientId: "dinggfdihxaads6x4hkl", ClientSecret: "Spa6oTv-wgj85WkkdhHKFLadjqStsJOWabg6ZMGXHiPXR48T0a5fxSEaoCW134Ad"}).
+		Credential(&clientV2.AuthClientCredential{ClientId: "put your clientId", ClientSecret: "put your clientSecret"}).
 		RegisterCallbackHandler("/v1.0/im/bot/messages/get", HandMyBot).
 		Build().
 		Start(context.Background())
@@ -61,7 +61,12 @@ func main() {
 	select {}
 }
 
-func HandMyBot(data *chatbot.BotCallbackDataModel) (error, *chatbot.BotCallbackRespModel) {
-	fmt.Println("收到数据:", data)
-	return nil, &chatbot.BotCallbackRespModel{}
+func HandMyBot(data *chatbot.BotCallbackDataModel) (*chatbot.BotCallbackRespModel, error) {
+	replyMsg := []byte(fmt.Sprintf("msg received: [%s]", data.Text.Content))
+
+	chatbotReplier := chatbot.NewChatbotReplier()
+	chatbotReplier.SimpleReplyText(context.Background(), data.SessionWebhook, replyMsg)
+	chatbotReplier.SimpleReplyMarkdown(context.Background(), data.SessionWebhook, []byte("Markdown消息"), replyMsg)
+
+	return &chatbot.BotCallbackRespModel{}, nil
 }
