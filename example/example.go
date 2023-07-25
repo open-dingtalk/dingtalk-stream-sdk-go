@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/clientV2"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/event"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
@@ -47,27 +46,34 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 
 // go run example/*.go --client_id your-client-id --client_secret your-client-secret
 func main() {
-	var clientId, clientSecret string
-	flag.StringVar(&clientId, "client_id", "", "your-client-id")
-	flag.StringVar(&clientSecret, "client_secret", "", "your-client-secret")
-
-	flag.Parse()
-
 	logger.SetLogger(logger.NewStdTestLogger())
-
-	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
-
-	//注册事件类型的处理函数
-	cli.RegisterAllEventRouter(OnEventReceived)
-	//注册callback类型的处理函数
-	cli.RegisterChatBotCallbackRouter(OnChatBotMessageReceived)
-
-	err := cli.Start(context.Background())
-	if err != nil {
-		panic(err)
+	e := clientV2.
+		NewBuilder().
+		//配置日志
+		Logger(logger.NewStdTestLogger()).
+		Credential(&clientV2.AuthClientCredential{ClientId: "put your app clientId here", ClientSecret: "put your app clientSecret here"}).
+		//开放平台事件
+		RegisterAllEventHandler(func(event *clientV2.GenericOpenDingTalkEvent) clientV2.EventStatus {
+			println("receive event ", event.Data)
+			//成功返回 clientV2.EventStatusSuccess,失败返回clientV2.EventStatusLater
+			return clientV2.EventStatusSuccess
+		}).
+		Build().
+		Start(context.Background())
+	if e != nil {
+		println("failed to start stream client", e.Error())
+		return
 	}
 
-	defer cli.Close()
-
 	select {}
+}
+
+func HandMyBot(data *chatbot.BotCallbackDataModel) (*chatbot.BotCallbackRespModel, error) {
+	replyMsg := []byte(fmt.Sprintf("msg received: [%s]", data.Text.Content))
+
+	chatbotReplier := chatbot.NewChatbotReplier()
+	chatbotReplier.SimpleReplyText(context.Background(), data.SessionWebhook, replyMsg)
+	chatbotReplier.SimpleReplyMarkdown(context.Background(), data.SessionWebhook, []byte("Markdown消息"), replyMsg)
+
+	return &chatbot.BotCallbackRespModel{}, nil
 }

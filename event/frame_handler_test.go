@@ -3,8 +3,8 @@ package event
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 

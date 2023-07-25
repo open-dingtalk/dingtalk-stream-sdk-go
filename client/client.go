@@ -33,6 +33,7 @@ type StreamClient struct {
 	conn      *websocket.Conn
 	sessionId string
 	mutex     sync.Mutex
+	host      string
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
@@ -94,7 +95,7 @@ func (cli *StreamClient) Start(ctx context.Context) error {
 	cli.conn = conn
 	cli.sessionId = endpoint.Ticket
 
-	logger.GetLogger().Infof("connect success, sessionId=[%s]", cli.sessionId)
+	logger.GetLogger().Infof("connect success, connectionId=[%s]", cli.sessionId)
 
 	go cli.processLoop()
 
@@ -272,6 +273,7 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		ClientSecret:  cli.AppCredential.ClientSecret,
 		UserAgent:     cli.UserAgent.UserAgent,
 		Subscriptions: make([]*payload.SubscriptionModel, 0),
+		LocalIp:       utils.GetLocalIP(),
 	}
 
 	for ttype, subs := range cli.subscriptions {
@@ -285,7 +287,12 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 
 	requestJsonBody, _ := json.Marshal(requestModel)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, utils.GetConnectionEndpointAPIUrl, bytes.NewReader(requestJsonBody))
+	apiHost := cli.host
+	if len(cli.host) == 0 {
+		apiHost = utils.OpenDingTalkEndpoint
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiHost+utils.OpenConnectionUri, bytes.NewReader(requestJsonBody))
 	if err != nil {
 		return nil, err
 	}

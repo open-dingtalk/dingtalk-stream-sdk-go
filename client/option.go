@@ -36,3 +36,9 @@ func WithUserAgent(ua *UserAgentConfig) ClientOption {
 		c.UserAgent = ua
 	}
 }
+
+func WithHost(host string) ClientOption {
+	return func(client *StreamClient) {
+		client.host = host
+	}
+}
