@@ -273,6 +273,9 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		UserAgent:     cli.UserAgent.UserAgent,
 		Subscriptions: make([]*payload.SubscriptionModel, 0),
 	}
+	if localIp, err := utils.GetFirstLanIP(); err == nil {
+		requestModel.LocalIP = localIp
+	}
 
 	for ttype, subs := range cli.subscriptions {
 		for ttopic, _ := range subs {

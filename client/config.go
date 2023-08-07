@@ -41,7 +41,7 @@ type UserAgentConfig struct {
 
 func NewDingtalkGoSDKUserAgent() *UserAgentConfig {
 	return &UserAgentConfig{
-		UserAgent: "dingtalk-sdk-go/v0.2.0",
+		UserAgent: "dingtalk-sdk-go/v0.3.0",
 	}
 }
 
