@@ -30,12 +30,15 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 
 // 简单的插件处理实现
 func OnPluginMessageReceived(ctx context.Context, message *plugin.DingTalkPluginMessage) (interface{}, error) {
-	if message.AbilityKey == "echo" { //可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
+	//可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
+	if message.AbilityKey == "echo" {
 		echoRequest := &EchoRequest{}
+		//将数据转换成插件的请求参数
 		err := message.ParseData(echoRequest)
 		if err != nil {
 			return nil, err
 		}
+		//执行插件
 		echoResponse := Echo(echoRequest)
 		return echoResponse, nil
 	}
@@ -70,8 +73,8 @@ func main() {
 
 	logger.SetLogger(logger.NewStdTestLogger())
 
-	//cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
-	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig("dingfplahibzeqzfudlz", "If8TqLjRXpUuq8vPUdQ4042qRYTaCXaXldYZOJUq8xnCiwrhDYAz5YHxS7l2oPoC")))
+	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
+
 	//注册事件类型的处理函数
 	cli.RegisterAllEventRouter(OnEventReceived)
 	//注册callback类型的处理函数

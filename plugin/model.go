@@ -14,10 +14,12 @@ type DingTalkPluginMessage struct {
 	RequestId     string      `json:"requestId"`
 }
 
-func (req *DingTalkPluginMessage) ParseData(model interface{}) error {
-	//TO DO 处理异常
+// 用于将数据转换成插件的请求参数
+func (req *DingTalkPluginMessage) ParseData(model interface{}) (err error) {
 	defer func() {
-		recover()
+		if e := recover(); e != nil {
+			err = errors.New(fmt.Sprintf("parse data error: %v", e))
+		}
 	}()
 	m, ok := req.Data.(map[string]interface{})
 	if !ok {

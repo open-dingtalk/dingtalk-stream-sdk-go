@@ -1,5 +1,6 @@
 package main
 
+// 插件例子
 type EchoRequest struct {
 	Message string
 }
