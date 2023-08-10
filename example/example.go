@@ -29,8 +29,8 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 }
 
 // 简单的插件处理实现
-func OnPluginRequestReceived(ctx context.Context, message *plugin.DingTalkPluginMessage) (interface{}, error) {
-	if message.AbilityKey == "echo" {
+func OnPluginMessageReceived(ctx context.Context, message *plugin.DingTalkPluginMessage) (interface{}, error) {
+	if message.AbilityKey == "echo" { //可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
 		echoRequest := &EchoRequest{}
 		err := message.ParseData(echoRequest)
 		if err != nil {
@@ -70,14 +70,15 @@ func main() {
 
 	logger.SetLogger(logger.NewStdTestLogger())
 
-	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
-
+	//cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
+	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig("dingfplahibzeqzfudlz", "If8TqLjRXpUuq8vPUdQ4042qRYTaCXaXldYZOJUq8xnCiwrhDYAz5YHxS7l2oPoC")))
 	//注册事件类型的处理函数
 	cli.RegisterAllEventRouter(OnEventReceived)
 	//注册callback类型的处理函数
 	cli.RegisterChatBotCallbackRouter(OnChatBotMessageReceived)
+	//注册插件的处理函数
+	cli.RegisterPluginCallbackRouter(OnPluginMessageReceived)
 
-	cli.RegisterPluginCallbackRouter(OnPluginRequestReceived)
 	err := cli.Start(context.Background())
 	if err != nil {
 		panic(err)
