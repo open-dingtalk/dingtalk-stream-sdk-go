@@ -382,8 +382,8 @@ func (cli *StreamClient) RegisterChatBotCallbackRouter(messageHandler chatbot.IC
 }
 
 // AI插件的注册函数
-func (cli *StreamClient) RegisterPluginCallbackRouter(messageHandler plugin.IDingTalkPluginHandler) {
-	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.BotPluginCallbackTopic, plugin.NewDefaultDingTalkPluginFrameHandler(messageHandler).OnEventReceived)
+func (cli *StreamClient) RegisterPluginCallbackRouter(messageHandler plugin.IPluginMessageHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.PluginMessageCallbackTopic, plugin.NewDefaultPluginFrameHandler(messageHandler).OnEventReceived)
 }
 
 // 事件类型的注册函数

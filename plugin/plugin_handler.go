@@ -10,19 +10,19 @@ type CallbackResponse struct {
 	Response interface{} `json:"response"`
 }
 
-type IDingTalkPluginHandler func(c context.Context, data *DingTalkPluginMessage) (interface{}, error)
+type IPluginMessageHandler func(c context.Context, data *DingTalkPluginMessage) (interface{}, error)
 
-type DefaultDingTalkPluginFrameHandler struct {
-	defaultHandler IDingTalkPluginHandler
+type DefaultPluginFrameHandler struct {
+	defaultHandler IPluginMessageHandler
 }
 
-func NewDefaultDingTalkPluginFrameHandler(defaultHandler IDingTalkPluginHandler) *DefaultDingTalkPluginFrameHandler {
-	return &DefaultDingTalkPluginFrameHandler{
+func NewDefaultPluginFrameHandler(defaultHandler IPluginMessageHandler) *DefaultPluginFrameHandler {
+	return &DefaultPluginFrameHandler{
 		defaultHandler: defaultHandler,
 	}
 }
 
-func (h *DefaultDingTalkPluginFrameHandler) OnEventReceived(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
+func (h *DefaultPluginFrameHandler) OnEventReceived(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
 	msgData := &DingTalkPluginMessage{}
 	err := json.Unmarshal([]byte(df.Data), msgData)
 	if err != nil {
