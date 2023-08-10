@@ -29,7 +29,7 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 }
 
 // 简单的插件处理实现
-func OnPluginMessageReceived(ctx context.Context, message *plugin.DingTalkPluginMessage) (interface{}, error) {
+func OnPluginMessageReceived(ctx context.Context, message *plugin.PluginMessage) (interface{}, error) {
 	//可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
 	if message.AbilityKey == "echo" {
 		echoRequest := &EchoRequest{}

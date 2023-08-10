@@ -6,7 +6,7 @@ import (
 	"reflect"
 )
 
-type DingTalkPluginMessage struct {
+type PluginMessage struct {
 	PluginId      string      `json:"pluginId"`
 	PluginVersion string      `json:"pluginVersion"`
 	AbilityKey    string      `json:"abilityKey"`
@@ -15,7 +15,7 @@ type DingTalkPluginMessage struct {
 }
 
 // 用于将数据转换成插件的请求参数
-func (req *DingTalkPluginMessage) ParseData(model interface{}) (err error) {
+func (req *PluginMessage) ParseData(model interface{}) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = errors.New(fmt.Sprintf("parse data error: %v", e))
@@ -36,7 +36,7 @@ func (req *DingTalkPluginMessage) ParseData(model interface{}) (err error) {
 	return nil
 }
 
-type DingTalkPluginResponse struct {
+type PluginResponse struct {
 	Result    interface{} `json:"result"`
 	RequestId string      `json:"requestId"`
 }

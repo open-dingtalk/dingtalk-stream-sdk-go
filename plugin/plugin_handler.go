@@ -10,7 +10,7 @@ type CallbackResponse struct {
 	Response interface{} `json:"response"`
 }
 
-type IPluginMessageHandler func(c context.Context, data *DingTalkPluginMessage) (interface{}, error)
+type IPluginMessageHandler func(c context.Context, data *PluginMessage) (interface{}, error)
 
 type DefaultPluginFrameHandler struct {
 	defaultHandler IPluginMessageHandler
@@ -23,7 +23,7 @@ func NewDefaultPluginFrameHandler(defaultHandler IPluginMessageHandler) *Default
 }
 
 func (h *DefaultPluginFrameHandler) OnEventReceived(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
-	msgData := &DingTalkPluginMessage{}
+	msgData := &PluginMessage{}
 	err := json.Unmarshal([]byte(df.Data), msgData)
 	if err != nil {
 		return nil, err
@@ -37,8 +37,8 @@ func (h *DefaultPluginFrameHandler) OnEventReceived(ctx context.Context, df *pay
 	if err != nil {
 		return nil, err
 	}
-	dingTalkPluginResponse := &DingTalkPluginResponse{RequestId: msgData.RequestId, Result: result}
-	callbackResponse := &CallbackResponse{Response: dingTalkPluginResponse}
+	pluginResponse := &PluginResponse{RequestId: msgData.RequestId, Result: result}
+	callbackResponse := &CallbackResponse{Response: pluginResponse}
 	frameResp := payload.NewSuccessDataFrameResponse()
 	frameResp.SetJson(callbackResponse)
 	return frameResp, nil
