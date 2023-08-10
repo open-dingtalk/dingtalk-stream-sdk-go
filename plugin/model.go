@@ -25,12 +25,12 @@ func (req *PluginMessage) ParseData(model interface{}) (err error) {
 	if !ok {
 		return errors.New(fmt.Sprintf("invalid data: %v", req.Data))
 	}
-	stValue := reflect.ValueOf(model).Elem()
-	sType := stValue.Type()
-	for i := 0; i < sType.NumField(); i++ {
-		field := sType.Field(i)
+	pValue := reflect.ValueOf(model).Elem()
+	pType := pValue.Type()
+	for i := 0; i < pType.NumField(); i++ {
+		field := pType.Field(i)
 		if value, ok := m[field.Name]; ok {
-			stValue.Field(i).Set(reflect.ValueOf(value))
+			pValue.Field(i).Set(reflect.ValueOf(value))
 		}
 	}
 	return nil
