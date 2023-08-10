@@ -34,7 +34,7 @@ func OnPluginMessageReceived(ctx context.Context, message *plugin.PluginMessage)
 	if message.AbilityKey == "echo" {
 		echoRequest := &EchoRequest{}
 		//将数据转换成插件的请求参数
-		err := message.ParseData(echoRequest)
+		err := message.ParseRequest(echoRequest)
 		if err != nil {
 			return nil, err
 		}
