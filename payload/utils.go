@@ -23,7 +23,8 @@ const (
 	DataFrameResponseStatusCodeKInternalError   = 500
 	DataFrameResponseStatusCodeKHandlerNotFound = 404
 
-	BotMessageCallbackTopic = "/v1.0/im/bot/messages/get" //机器人消息统一回调topic
+	BotMessageCallbackTopic    = "/v1.0/im/bot/messages/get"  //机器人消息统一回调topic
+	PluginMessageCallbackTopic = "/v1.0/agi/plugins/callback" //AI插件消息统一回调topic
 )
 
 func GenerateMessageId(prefix string) string {

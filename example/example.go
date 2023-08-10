@@ -9,6 +9,7 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/event"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/plugin"
 )
 
 /**
@@ -25,6 +26,23 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 	chatbotReplier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("Markdown消息"), replyMsg)
 
 	return []byte(""), nil
+}
+
+// 简单的插件处理实现
+func OnPluginMessageReceived(ctx context.Context, message *plugin.PluginMessage) (interface{}, error) {
+	//可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
+	if message.AbilityKey == "echo" {
+		echoRequest := &EchoRequest{}
+		//将数据转换成插件的请求参数
+		err := message.ParseRequest(echoRequest)
+		if err != nil {
+			return nil, err
+		}
+		//执行插件
+		echoResponse := Echo(echoRequest)
+		return echoResponse, nil
+	}
+	return nil, nil
 }
 
 // 事件处理
@@ -61,6 +79,8 @@ func main() {
 	cli.RegisterAllEventRouter(OnEventReceived)
 	//注册callback类型的处理函数
 	cli.RegisterChatBotCallbackRouter(OnChatBotMessageReceived)
+	//注册插件的处理函数
+	cli.RegisterPluginCallbackRouter(OnPluginMessageReceived)
 
 	err := cli.Start(context.Background())
 	if err != nil {

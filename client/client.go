@@ -11,6 +11,7 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/plugin"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/utils"
 	"io"
 	"net/http"
@@ -378,6 +379,11 @@ func (cli *StreamClient) RegisterCallbackRouter(topic string, frameHandler handl
 // 聊天机器人的注册函数
 func (cli *StreamClient) RegisterChatBotCallbackRouter(messageHandler chatbot.IChatBotMessageHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, chatbot.NewDefaultChatBotFrameHandler(messageHandler).OnEventReceived)
+}
+
+// AI插件的注册函数
+func (cli *StreamClient) RegisterPluginCallbackRouter(messageHandler plugin.IPluginMessageHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.PluginMessageCallbackTopic, plugin.NewDefaultPluginFrameHandler(messageHandler).OnEventReceived)
 }
 
 // 事件类型的注册函数
