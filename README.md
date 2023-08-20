@@ -50,8 +50,4 @@ go run example/*.go -client_id "your-client-id" -client_secret "your-client-secr
 
 ### 技术支持
 
-可以搜索共创群，答疑交流。共创群ID：35365014813 （钉钉搜索群号入群）；
-
-也可以扫码入群：
-
-![扫码入群](https://gw.alicdn.com/imgextra/i1/O1CN01Cl10lw1OrfW9LdIgQ_!!6000000001759-0-tps-585-765.jpg)
+[点击链接，加入Stream模式共创群交流](https://open-dingtalk.github.io/developerpedia/docs/explore/support/?via=moon-group)
