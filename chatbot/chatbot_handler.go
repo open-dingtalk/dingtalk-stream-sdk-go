@@ -3,6 +3,7 @@ package chatbot
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
 

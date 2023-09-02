@@ -6,17 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+
 	"github.com/gorilla/websocket"
+
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/plugin"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/utils"
-	"io"
-	"net/http"
-	"sync"
-	"time"
 )
 
 /**
