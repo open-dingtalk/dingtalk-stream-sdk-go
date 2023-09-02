@@ -23,8 +23,12 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 	replyMsg := []byte(fmt.Sprintf("msg received: [%s]", data.Text.Content))
 
 	chatbotReplier := chatbot.NewChatbotReplier()
-	chatbotReplier.SimpleReplyText(ctx, data.SessionWebhook, replyMsg)
-	chatbotReplier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("Markdown消息"), replyMsg)
+	if err := chatbotReplier.SimpleReplyText(ctx, data.SessionWebhook, replyMsg); err != nil {
+		return nil, err
+	}
+	if err := chatbotReplier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("Markdown消息"), replyMsg); err != nil {
+		return nil, err
+	}
 
 	return []byte(""), nil
 }
@@ -59,7 +63,9 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 		df.Data)
 
 	frameResp = payload.NewSuccessDataFrameResponse()
-	frameResp.SetJson(event.NewEventProcessResultSuccess())
+	if err := frameResp.SetJson(event.NewEventProcessResultSuccess()); err != nil {
+		return nil, err
+	}
 
 	return
 }

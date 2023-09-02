@@ -41,6 +41,8 @@ func (h *DefaultPluginFrameHandler) OnEventReceived(ctx context.Context, df *pay
 	pluginResponse := &PluginResponse{RequestId: msgData.RequestId, Result: result}
 	callbackResponse := &CallbackResponse{Response: pluginResponse}
 	frameResp := payload.NewSuccessDataFrameResponse()
-	frameResp.SetJson(callbackResponse)
+	if err = frameResp.SetJson(callbackResponse); err != nil {
+		return nil, err
+	}
 	return frameResp, nil
 }

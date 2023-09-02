@@ -281,7 +281,7 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 	}
 
 	for ttype, subs := range cli.subscriptions {
-		for ttopic, _ := range subs {
+		for ttopic := range subs {
 			requestModel.Subscriptions = append(requestModel.Subscriptions, &payload.SubscriptionModel{
 				Type:  ttype,
 				Topic: ttopic,
