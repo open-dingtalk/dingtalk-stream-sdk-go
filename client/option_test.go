@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
 
 /**

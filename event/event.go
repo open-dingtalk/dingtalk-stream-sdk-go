@@ -1,8 +1,9 @@
 package event
 
 import (
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 	"strconv"
+
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
 
 /**
