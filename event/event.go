@@ -72,3 +72,19 @@ func NewEventProcessResultLater() *EventProcessResult {
 		Message: "later",
 	}
 }
+
+func NewSuccessResponse() (*payload.DataFrameResponse, error) {
+	response := payload.NewSuccessDataFrameResponse()
+	if err := response.SetJson(NewEventProcessResultSuccess()); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+func NewLaterResponse() (*payload.DataFrameResponse, error) {
+	response := payload.NewSuccessDataFrameResponse()
+	if err := response.SetJson(NewEventProcessResultLater()); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
