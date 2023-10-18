@@ -34,20 +34,11 @@ func OnChatBotMessageReceived(ctx context.Context, data *chatbot.BotCallbackData
 }
 
 // 简单的插件处理实现
-func OnPluginMessageReceived(ctx context.Context, message *plugin.PluginMessage) (interface{}, error) {
-	//可以根据message中的PluginId、PluginVersion、AbilityKey路由到具体一个能力
-	if message.AbilityKey == "echo" {
-		echoRequest := &EchoRequest{}
-		//将数据转换成插件的请求参数
-		err := message.ParseRequest(echoRequest)
-		if err != nil {
-			return nil, err
-		}
-		//执行插件
-		echoResponse := Echo(echoRequest)
-		return echoResponse, nil
+func OnPluginMessageReceived(ctx context.Context, request *plugin.GraphRequest) (*plugin.GraphResponse, error) {
+	response := &plugin.GraphResponse{
+		Body: `{"text": "hello world", "content": [{"title": "1", "description": "2", "url":"https://www.zhihu.com/question/626551401"},{"title": "2", "description": "2", "url":"https://www.zhihu.com/question/626551401"}]}`,
 	}
-	return nil, nil
+	return response, nil
 }
 
 // 事件处理
