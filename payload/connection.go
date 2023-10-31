@@ -12,13 +12,14 @@ type SubscriptionModel struct {
 	Topic string `json:"topic"`
 }
 
-// 长连接接入点请求
+// ConnectionEndpointRequest 长连接接入点请求
 type ConnectionEndpointRequest struct {
 	ClientId      string               `json:"clientId"`     //自建应用appKey; 三方应用suiteKey
 	ClientSecret  string               `json:"clientSecret"` //自建应用appSecret; 三方应用suiteSecret
 	Subscriptions []*SubscriptionModel `json:"subscriptions"`
 	UserAgent     string               `json:"ua"`
 	LocalIP       string               `json:"localIp"`
+	Extras        map[string]string    `json:"extras"`
 }
 
 // 长连接接入点参数

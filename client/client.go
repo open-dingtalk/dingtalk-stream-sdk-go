@@ -36,6 +36,7 @@ type StreamClient struct {
 	conn      *websocket.Conn
 	sessionId string
 	mutex     sync.Mutex
+	extras    map[string]string
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
@@ -275,6 +276,7 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		ClientSecret:  cli.AppCredential.ClientSecret,
 		UserAgent:     cli.UserAgent.UserAgent,
 		Subscriptions: make([]*payload.SubscriptionModel, 0),
+		Extras:        cli.extras,
 	}
 	if localIp, err := utils.GetFirstLanIP(); err == nil {
 		requestModel.LocalIP = localIp
@@ -373,27 +375,32 @@ func (cli *StreamClient) RegisterRouter(stype, stopic string, frameHandler handl
 	cli.subscriptions[stype][stopic] = frameHandler
 }
 
-// callback类型注册函数
+// RegisterCallbackRouter callback类型注册函数
 func (cli *StreamClient) RegisterCallbackRouter(topic string, frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, topic, frameHandler)
 }
 
-// 聊天机器人的注册函数
+// RegisterChatBotCallbackRouter 聊天机器人的注册函数
 func (cli *StreamClient) RegisterChatBotCallbackRouter(messageHandler chatbot.IChatBotMessageHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.BotMessageCallbackTopic, chatbot.NewDefaultChatBotFrameHandler(messageHandler).OnEventReceived)
 }
 
-// AI插件的注册函数
+// RegisterPluginCallbackRouter AI插件的注册函数
 func (cli *StreamClient) RegisterPluginCallbackRouter(messageHandler plugin.IPluginMessageHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.PluginMessageCallbackTopic, plugin.NewDefaultPluginFrameHandler(messageHandler).OnEventReceived)
 }
 
-// 事件类型的注册函数
+// RegisterEventRouter 事件类型的注册函数
 func (cli *StreamClient) RegisterEventRouter(topic string, frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKEvent, topic, frameHandler)
 }
 
-// 事件类型的注册函数
+// RegisterAllEventRouter 事件类型的注册函数
 func (cli *StreamClient) RegisterAllEventRouter(frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKEvent, "*", frameHandler)
+}
+
+// WithClientExtras 补全客户端其他信息
+func (cli *StreamClient) WithClientExtras(extras map[string]string) {
+	cli.extras = extras
 }
