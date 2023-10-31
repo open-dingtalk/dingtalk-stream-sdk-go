@@ -34,14 +34,14 @@ func (c *AppCredentialConfig) Valid() error {
 	return nil
 }
 
-// UA信息
+// UserAgentConfig UA信息
 type UserAgentConfig struct {
 	UserAgent string `json:"user_agent"`
 }
 
 func NewDingtalkGoSDKUserAgent() *UserAgentConfig {
 	return &UserAgentConfig{
-		UserAgent: "dingtalk-sdk-go/v0.5.1",
+		UserAgent: "dingtalk-sdk-go/v0.6.1",
 	}
 }
 
