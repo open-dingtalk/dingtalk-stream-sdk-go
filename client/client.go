@@ -36,6 +36,7 @@ type StreamClient struct {
 	conn      *websocket.Conn
 	sessionId string
 	mutex     sync.Mutex
+	extras    map[string]string
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
@@ -275,6 +276,7 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		ClientSecret:  cli.AppCredential.ClientSecret,
 		UserAgent:     cli.UserAgent.UserAgent,
 		Subscriptions: make([]*payload.SubscriptionModel, 0),
+		Extras:        cli.extras,
 	}
 	if localIp, err := utils.GetFirstLanIP(); err == nil {
 		requestModel.LocalIP = localIp
