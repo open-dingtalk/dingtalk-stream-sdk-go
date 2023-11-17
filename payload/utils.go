@@ -24,8 +24,9 @@ const (
 	DataFrameResponseStatusCodeKInternalError   = 500
 	DataFrameResponseStatusCodeKHandlerNotFound = 404
 
-	BotMessageCallbackTopic    = "/v1.0/im/bot/messages/get" //机器人消息统一回调topic
-	PluginMessageCallbackTopic = "/v1.0/graph/api/invoke"    //AI插件消息统一回调topic
+	BotMessageCallbackTopic    = "/v1.0/im/bot/messages/get"     // 机器人消息统一回调 topic
+	PluginMessageCallbackTopic = "/v1.0/graph/api/invoke"        // AI插件消息统一回调 topic
+	CardInstanceCallbackTopic  = "/v1.0/card/instances/callback" // 卡片回调的 topic
 )
 
 func GenerateMessageId(prefix string) string {

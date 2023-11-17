@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"io"
 	"net/http"
 	"sync"
@@ -405,12 +406,17 @@ func (cli *StreamClient) RegisterPluginCallbackRouter(messageHandler plugin.IPlu
 	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.PluginMessageCallbackTopic, plugin.NewDefaultPluginFrameHandler(messageHandler).OnEventReceived)
 }
 
+// 互动卡片的注册函数
+func (cli *StreamClient) RegisterCardCallbackRouter(messageHandler card.ICardCallbackHandler) {
+	cli.RegisterRouter(utils.SubscriptionTypeKCallback, payload.CardInstanceCallbackTopic, card.NewDefaultPluginFrameHandler(messageHandler).OnEventReceived)
+}
+
 // 事件类型的注册函数
 func (cli *StreamClient) RegisterEventRouter(topic string, frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKEvent, topic, frameHandler)
 }
 
-// 事件类型的注册函数
+// 所有事件的注册函数
 func (cli *StreamClient) RegisterAllEventRouter(frameHandler handler.IFrameHandler) {
 	cli.RegisterRouter(utils.SubscriptionTypeKEvent, "*", frameHandler)
 }

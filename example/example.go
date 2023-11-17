@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
@@ -61,6 +62,14 @@ func OnEventReceived(ctx context.Context, df *payload.DataFrame) (frameResp *pay
 	return
 }
 
+func OnCardCallbackReceived(ctx context.Context, request *card.CardRequest) (*card.CardResponse, error) {
+	logger.GetLogger().Infof("receive card data: %v", request)
+	response := &card.CardResponse{
+		CardData: &card.CardDataDto{},
+	}
+	return response, nil
+}
+
 // go run example/*.go --client_id your-client-id --client_secret your-client-secret
 func main() {
 	var clientId, clientSecret string
@@ -79,6 +88,8 @@ func main() {
 	cli.RegisterChatBotCallbackRouter(OnChatBotMessageReceived)
 	//注册插件的处理函数
 	cli.RegisterPluginCallbackRouter(OnPluginMessageReceived)
+	//注册互动卡片类型的处理函数
+	cli.RegisterCardCallbackRouter(OnCardCallbackReceived)
 
 	err := cli.Start(context.Background())
 	if err != nil {
