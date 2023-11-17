@@ -128,7 +128,7 @@ func (cli *StreamClient) processLoop() {
 			return
 		}
 
-		logger.GetLogger().Debugf("ReadRawMessage : messageType=[%d] message=[%s]", messageType, string(message))
+		logger.GetLogger().Debugf("[wire] [websocket] remote => local: \n%s", string(message))
 
 		go cli.processDataFrame(message)
 	}
@@ -178,7 +178,8 @@ func (cli *StreamClient) processDataFrame(rawData []byte) {
 	}
 
 	errSend := cli.SendDataFrameResponse(context.Background(), dataAck)
-	logger.GetLogger().Debugf("SendFrameAck dataAck=[%v", dataAck)
+	sentBytes, _ := json.Marshal(dataAck)
+	logger.GetLogger().Debugf("[wire] [websocket] local => remote:\n%s", string(sentBytes))
 
 	if errSend != nil {
 		logger.GetLogger().Errorf("connection processDataFrame send response error: error=[%s]", errSend)
@@ -314,6 +315,9 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		Timeout:   5 * time.Second, //设置超时，包含connection时间、任意重定向时间、读取response body时间
 	}
 
+	logger.GetLogger().Debugf("[wire] [http] local => remote:\n%s %s %s\nHost: %s\n%s\n\n%s",
+		req.Method, req.URL.RequestURI(), req.Proto, req.Host,
+		utils.DumpHeaders(req.Header), requestJsonBody)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -329,6 +333,9 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 	if err != nil {
 		return nil, err
 	}
+	logger.GetLogger().Debugf("[wire] [http] remote => localhost:\n%s %s\n%s\n\n%s",
+		resp.Proto, resp.Status,
+		utils.DumpHeaders(resp.Header), responseJsonBody)
 
 	endpoint := &payload.ConnectionEndpointResponse{}
 

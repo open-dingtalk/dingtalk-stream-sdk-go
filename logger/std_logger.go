@@ -12,16 +12,27 @@ import (
 
 // This logger is only for debug. Do not use it online.
 type StdTestLogger struct {
+	isDebugEnabled bool
 }
 
 func NewStdTestLogger() *StdTestLogger {
-	return &StdTestLogger{}
+	return &StdTestLogger{
+		isDebugEnabled: false,
+	}
+}
+
+func NewStdTestLoggerWithDebug() *StdTestLogger {
+	return &StdTestLogger{
+		isDebugEnabled: true,
+	}
 }
 
 func (l *StdTestLogger) Debugf(format string, args ...interface{}) {
-	fmt.Printf("%s [Debug] ", time.Now().String())
-	fmt.Printf(format, args...)
-	fmt.Print("\n")
+	if l.isDebugEnabled {
+		fmt.Printf("%s [Debug] ", time.Now().String())
+		fmt.Printf(format, args...)
+		fmt.Print("\n")
+	}
 }
 
 func (l *StdTestLogger) Infof(format string, args ...interface{}) {

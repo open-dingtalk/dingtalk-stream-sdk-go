@@ -69,7 +69,7 @@ func main() {
 
 	flag.Parse()
 
-	logger.SetLogger(logger.NewStdTestLogger())
+	logger.SetLogger(logger.NewStdTestLoggerWithDebug())
 
 	cli := client.NewStreamClient(client.WithAppCredential(client.NewAppCredentialConfig(clientId, clientSecret)))
 

@@ -2,7 +2,10 @@ package utils
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"net/http"
+	"strings"
 )
 
 func GetFirstLanIP() (string, error) {
@@ -22,4 +25,14 @@ func GetFirstLanIP() (string, error) {
 		}
 	}
 	return "", errors.New("no valid interfaces")
+}
+
+func DumpHeaders(h http.Header) string {
+	var lines []string
+	for name, values := range h {
+		for _, value := range values {
+			lines = append(lines, fmt.Sprintf("%s: %s", name, value))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
