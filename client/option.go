@@ -42,3 +42,9 @@ func WithExtras(extras map[string]string) ClientOption {
 		c.extras = extras
 	}
 }
+
+func WithOpenApiHost(host string) ClientOption {
+	return func(c *StreamClient) {
+		c.openApiHost = host
+	}
+}
