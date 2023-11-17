@@ -33,9 +33,11 @@ type StreamClient struct {
 
 	subscriptions map[string]map[string]handler.IFrameHandler
 
-	conn      *websocket.Conn
-	sessionId string
-	mutex     sync.Mutex
+	conn        *websocket.Conn
+	sessionId   string
+	mutex       sync.Mutex
+	extras      map[string]string
+	openApiHost string
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
@@ -276,6 +278,7 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 		ClientSecret:  cli.AppCredential.ClientSecret,
 		UserAgent:     cli.UserAgent.UserAgent,
 		Subscriptions: make([]*payload.SubscriptionModel, 0),
+		Extras:        cli.extras,
 	}
 	if localIp, err := utils.GetFirstLanIP(); err == nil {
 		requestModel.LocalIP = localIp
@@ -292,7 +295,14 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 
 	requestJsonBody, _ := json.Marshal(requestModel)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, utils.GetConnectionEndpointAPIUrl, bytes.NewReader(requestJsonBody))
+	var targetHost string
+	if len(cli.openApiHost) == 0 {
+		targetHost = utils.DefaultOpenApiHost
+	} else {
+		targetHost = cli.openApiHost
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetHost+utils.GetConnectionEndpointAPIUrl, bytes.NewReader(requestJsonBody))
 	if err != nil {
 		return nil, err
 	}

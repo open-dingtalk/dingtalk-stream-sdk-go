@@ -36,3 +36,15 @@ func WithUserAgent(ua *UserAgentConfig) ClientOption {
 		c.UserAgent = ua
 	}
 }
+
+func WithExtras(extras map[string]string) ClientOption {
+	return func(c *StreamClient) {
+		c.extras = extras
+	}
+}
+
+func WithOpenApiHost(host string) ClientOption {
+	return func(c *StreamClient) {
+		c.openApiHost = host
+	}
+}

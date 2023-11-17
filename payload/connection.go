@@ -19,6 +19,7 @@ type ConnectionEndpointRequest struct {
 	Subscriptions []*SubscriptionModel `json:"subscriptions"`
 	UserAgent     string               `json:"ua"`
 	LocalIP       string               `json:"localIp"`
+	Extras        map[string]string    `json:"extras"`
 }
 
 // 长连接接入点参数

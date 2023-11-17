@@ -6,7 +6,8 @@ package utils
  */
 
 const (
-	GetConnectionEndpointAPIUrl = "https://api.dingtalk.com/v1.0/gateway/connections/open"
+	DefaultOpenApiHost          = "https://api.dingtalk.com"
+	GetConnectionEndpointAPIUrl = "/v1.0/gateway/connections/open"
 )
 
 const (
