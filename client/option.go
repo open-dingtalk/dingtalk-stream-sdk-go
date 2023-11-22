@@ -48,3 +48,9 @@ func WithOpenApiHost(host string) ClientOption {
 		c.openApiHost = host
 	}
 }
+
+func WithProxy(proxy string) ClientOption {
+	return func(c *StreamClient) {
+		c.proxy = proxy
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -39,6 +40,7 @@ type StreamClient struct {
 	mutex       sync.Mutex
 	extras      map[string]string
 	openApiHost string
+	proxy       string
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
@@ -87,7 +89,21 @@ func (cli *StreamClient) Start(ctx context.Context) error {
 
 	header := make(http.Header)
 
-	conn, resp, err := websocket.DefaultDialer.Dial(wssUrl, header)
+	var dialer *websocket.Dialer
+
+	if len(cli.proxy) == 0 {
+		dialer = websocket.DefaultDialer
+	} else {
+		proxyURL, err := url.Parse(cli.proxy)
+		if err != nil {
+			return err
+		}
+		dialer = &websocket.Dialer{
+			Proxy: http.ProxyURL(proxyURL),
+		}
+	}
+
+	conn, resp, err := dialer.Dial(wssUrl, header)
 	if err != nil {
 		return err
 	}
@@ -311,8 +327,22 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
+	var transport http.RoundTripper
+	if len(cli.proxy) == 0 {
+		transport = http.DefaultTransport
+	} else {
+		proxyURL, err := url.Parse(cli.proxy)
+
+		if err != nil {
+			return nil, err
+		}
+		transport = &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		}
+	}
+
 	httpClient := &http.Client{
-		Transport: http.DefaultTransport,
+		Transport: transport,
 		Timeout:   5 * time.Second, //设置超时，包含connection时间、任意重定向时间、读取response body时间
 	}
 
