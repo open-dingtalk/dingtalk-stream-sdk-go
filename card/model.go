@@ -9,6 +9,11 @@ type CardPrivateData struct {
 	Params       map[string]any `json:"params"`
 }
 
+type CardUpdateOptions struct {
+	UpdateCardDataByKey    bool `json:"updateCardDataByKey"`
+	UpdatePrivateDataByKey bool `json:"updatePrivateDataByKey"`
+}
+
 type CardDataDto struct {
 	CardParamMap map[string]string `json:"cardParamMap"`
 }
@@ -27,8 +32,9 @@ type CardRequest struct {
 }
 
 type CardResponse struct {
-	CardData        *CardDataDto `json:"cardData"`
-	PrivateCardData *CardDataDto `json:"privateCardData"`
+	CardUpdateOptions *CardUpdateOptions `json:"cardUpdateOptions"`
+	CardData          *CardDataDto       `json:"cardData"`
+	UserPrivateData   *CardDataDto       `json:"userPrivateData"`
 }
 
 func (r *CardRequest) GetActionString(name string) string {
