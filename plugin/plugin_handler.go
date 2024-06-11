@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/payload"
 )
@@ -28,6 +29,12 @@ func (h *DefaultPluginFrameHandler) OnEventReceived(ctx context.Context, df *pay
 	err := json.Unmarshal([]byte(df.Data), msgData)
 	if err != nil {
 		return nil, err
+	}
+	pos := strings.Index(msgData.RequestLine.Uri, "?")
+	if pos >= 0 {
+		msgData.RequestLine.Path = msgData.RequestLine.Uri[:pos]
+	} else {
+		msgData.RequestLine.Path = msgData.RequestLine.Uri
 	}
 
 	if h.defaultHandler == nil {

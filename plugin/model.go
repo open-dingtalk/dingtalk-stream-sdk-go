@@ -7,6 +7,7 @@ import (
 type GraphRequestLine struct {
 	Method string `json:"method"`
 	Uri    string `json:"uri"`
+	Path   string `json:"-"`
 }
 type GraphRequest struct {
 	RequestLine GraphRequestLine  `json:"requestLine"`
