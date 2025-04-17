@@ -35,16 +35,19 @@ type StreamClient struct {
 
 	subscriptions map[string]map[string]handler.IFrameHandler
 
-	conn        *websocket.Conn
-	sessionId   string
-	mutex       sync.Mutex
-	extras      map[string]string
-	openApiHost string
-	proxy       string
+	conn          *websocket.Conn
+	sessionId     string
+	mutex         sync.Mutex
+	extras        map[string]string
+	openApiHost   string
+	proxy         string
+	keepAliveIdle time.Duration
 }
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
-	cli := &StreamClient{}
+	cli := &StreamClient{
+		keepAliveIdle: 120 * time.Second,
+	}
 
 	defaultOptions := []ClientOption{
 		WithSubscription(utils.SubscriptionTypeKSystem, "disconnect", cli.OnDisconnect),
@@ -133,21 +136,66 @@ func (cli *StreamClient) processLoop() {
 		}
 	}()
 
+	if cli.conn == nil {
+		logger.GetLogger().Errorf("connection process connect nil, maybe disconnected.")
+		return
+	}
+
+	readChan := make(chan []byte)
+	pongChan := make(chan struct{})
+	closeChan := make(chan struct{})
+	defer func() { close(closeChan) }()
+	defer func() { close(pongChan) }()
+	defer func() { close(readChan) }()
+
+	cli.conn.SetPongHandler(func(appData string) error {
+		pongChan <- struct{}{}
+		return nil
+	})
+	//开始启动协程读数据
+	go func() {
+		for {
+			messageType, message, err := cli.conn.ReadMessage()
+			if err != nil {
+				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
+				closeChan <- struct{}{}
+				return
+			}
+			if messageType == websocket.TextMessage {
+				readChan <- message
+			}
+		}
+	}()
+
+	//循环处理事件
 	for {
-		if cli.conn == nil {
-			logger.GetLogger().Errorf("connection process connect nil, maybe disconnected.")
+		select {
+		case msg, ok := <-readChan:
+			if ok {
+				go cli.processDataFrame(msg)
+			} else {
+				logger.GetLogger().Errorf("connection process is closed")
+				return
+			}
+		case <-time.After(cli.keepAliveIdle):
+			e := cli.conn.WriteMessage(websocket.PingMessage, nil)
+			if e != nil {
+				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
+				return
+			}
+			go func() {
+				select {
+				case <-pongChan:
+					return
+				case <-time.After(5 * time.Second):
+					logger.GetLogger().Errorf("ping time out, connection is closing")
+					closeChan <- struct{}{}
+					return
+				}
+			}()
+		case <-closeChan:
 			return
 		}
-
-		messageType, message, err := cli.conn.ReadMessage()
-		if err != nil {
-			logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-			return
-		}
-
-		logger.GetLogger().Debugf("[wire] [websocket] remote => local: \n%s", string(message))
-
-		go cli.processDataFrame(message)
 	}
 }
 

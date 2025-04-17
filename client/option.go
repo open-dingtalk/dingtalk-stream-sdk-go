@@ -1,6 +1,9 @@
 package client
 
-import "github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
+import (
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
+	"time"
+)
 
 /**
  * @Author linya.jj
@@ -24,6 +27,14 @@ func WithAppCredential(cred *AppCredentialConfig) ClientOption {
 func WithSubscription(stype, stopic string, frameHandler handler.IFrameHandler) ClientOption {
 	return func(c *StreamClient) {
 		c.RegisterRouter(stype, stopic, frameHandler)
+	}
+}
+
+func WithKeepAlive(keepAliveIdle time.Duration) ClientOption {
+	return func(client *StreamClient) {
+		if keepAliveIdle > 3*time.Second {
+			client.keepAliveIdle = keepAliveIdle
+		}
 	}
 }
 
