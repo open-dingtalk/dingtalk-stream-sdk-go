@@ -43,10 +43,9 @@ type StreamClient struct {
 
 func WithKeepAliveInterval(alive time.Duration) ClientOption {
 	return func(c *StreamClient) {
-		if alive < time.Second*3 {
-			alive = time.Second * 3
+		if alive > 3*time.Second {
+			c.KeepAliveInterval = alive
 		}
-		c.KeepAliveInterval = alive
 	}
 }
 
@@ -141,7 +140,6 @@ func (cli *StreamClient) processLoop() {
 	defer func() { close(readChan) }()
 
 	cli.conn.SetPongHandler(func(appData string) error {
-		//收到pong
 		pongChan <- struct{}{}
 		return nil
 	})
