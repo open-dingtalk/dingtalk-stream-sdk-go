@@ -32,7 +32,7 @@ func WithSubscription(stype, stopic string, frameHandler handler.IFrameHandler) 
 
 func WithKeepAlive(keepAliveIdle time.Duration) ClientOption {
 	return func(client *StreamClient) {
-		if keepAliveIdle > 3*time.Second {
+		if keepAliveIdle >= 3*time.Second {
 			client.keepAliveIdle = keepAliveIdle
 		}
 	}

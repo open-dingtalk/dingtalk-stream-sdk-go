@@ -169,15 +169,17 @@ func (cli *StreamClient) processLoop() {
 
 	//循环处理事件
 	for {
+		timer := time.NewTimer(cli.keepAliveIdle)
 		select {
 		case msg, ok := <-readChan:
+			timer.Stop()
 			if ok {
 				go cli.processDataFrame(msg)
 			} else {
 				logger.GetLogger().Errorf("connection process is closed")
 				return
 			}
-		case <-time.After(cli.keepAliveIdle):
+		case <-timer.C:
 			e := cli.conn.WriteMessage(websocket.PingMessage, nil)
 			if e != nil {
 				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
