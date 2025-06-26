@@ -127,6 +127,7 @@ func (cli *StreamClient) Start(ctx context.Context) error {
 }
 
 func (cli *StreamClient) processLoop() {
+	// 延迟执行函数，用于捕获panic和处理自动重连
 	defer func() {
 		if err := recover(); err != nil {
 			logger.GetLogger().Errorf("connection process panic due to unknown reason, error=[%s]", err)
@@ -136,71 +137,106 @@ func (cli *StreamClient) processLoop() {
 		}
 	}()
 
+	// 如果连接为空，则记录错误并返回
 	if cli.conn == nil {
 		logger.GetLogger().Errorf("connection process connect nil, maybe disconnected.")
 		return
 	}
 
-	readChan := make(chan []byte)
-	pongChan := make(chan struct{})
-	closeChan := make(chan struct{})
-	defer func() { close(closeChan) }()
-	defer func() { close(pongChan) }()
-	defer func() { close(readChan) }()
+	readChan := make(chan []byte)    // 用于接收读取到的消息
+	pongChan := make(chan struct{})  // 用于接收pong消息
+	closeChan := make(chan struct{}) // 此通道关闭时，表示需要终止循环
 
+	// 使用 sync.Once 确保关闭逻辑只执行一次，防止并发问题
+	var closeOnce sync.Once
+	signalClose := func() {
+		closeOnce.Do(func() {
+			close(closeChan) // 关闭通道，向所有监听者广播关闭信号
+		})
+	}
+
+	// 延迟关闭通道，确保 processLoop 退出时不会有 goroutine 泄露
+	defer func() {
+		close(pongChan)
+		close(readChan)
+	}()
+
+	// 设置 Pong 消息处理器
 	cli.conn.SetPongHandler(func(appData string) error {
-		pongChan <- struct{}{}
+		// 非阻塞地向 pongChan 发送信号。如果没有接收者，不会阻塞。
+		select {
+		case pongChan <- struct{}{}:
+		default:
+		}
 		return nil
 	})
-	//开始启动协程读数据
+
+	// 此 goroutine 从 websocket 连接中读取消息
 	go func() {
+		defer signalClose() // 确保此 goroutine 退出时，会发出关闭信号
 		for {
 			messageType, message, err := cli.conn.ReadMessage()
 			if err != nil {
+				// 任何读取错误都应触发循环的关闭
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-				closeChan <- struct{}{}
-				return
+				return // 退出 goroutine, defer 将调用 signalClose()
 			}
 			if messageType == websocket.TextMessage {
-				readChan <- message
+				// 将消息发送到处理循环，但如果循环正在关闭，则停止
+				select {
+				case readChan <- message:
+				case <-closeChan:
+					return // 如果连接正在关闭，则退出
+				}
 			}
 		}
 	}()
 
-	//循环处理事件
+	// 连接的主事件循环
 	for {
-		timer := time.NewTimer(cli.keepAliveIdle)
+		timer := time.NewTimer(cli.keepAliveIdle) // 创建一个心跳定时器
 		select {
+		// 处理从 readChan 接收到的消息
 		case msg, ok := <-readChan:
-			timer.Stop()
+			timer.Stop() // 收到消息，重置定时器
 			if ok {
-				go cli.processDataFrame(msg)
+				go cli.processDataFrame(msg) // 为每个消息启动一个新的 goroutine 进行处理
 			} else {
-				logger.GetLogger().Errorf("connection process is closed")
-				return
+				// 如果 readChan 被关闭，意味着读取 goroutine 已经退出
+				logger.GetLogger().Errorf("connection process read channel is closed, exiting loop")
+				signalClose() // 确保主循环也终止
 			}
+		// 定时器到期，发送心跳 ping
 		case <-timer.C:
-			e := cli.conn.WriteMessage(websocket.PingMessage, nil)
-			if e != nil {
-				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
-				return
+			// 发送 Ping 消息以保持连接活跃
+			if err := cli.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", err)
+				signalClose() // 如果 ping 失败，关闭连接
+				continue      // 回到循环顶部以捕获 closeChan 信号
 			}
+			// 启动一个 goroutine 等待 pong 响应
 			go func() {
 				select {
 				case <-pongChan:
+					// 收到 Pong，一切正常
 					return
 				case <-time.After(5 * time.Second):
+					// 在规定时间内未收到 Pong，发出关闭连接的信号
 					logger.GetLogger().Errorf("ping time out, connection is closing")
-					closeChan <- struct{}{}
+					signalClose()
+				case <-closeChan:
+					// 连接已经在关闭中，直接退出
 					return
 				}
 			}()
+		// 收到关闭信号
 		case <-closeChan:
-			return
+			timer.Stop() // 清理定时器
+			logger.GetLogger().Infof("processLoop received close signal, shutting down.")
+			return // 退出 processLoop
 		}
 	}
 }
-
 func (cli *StreamClient) processDataFrame(rawData []byte) {
 	defer func() {
 		if err := recover(); err != nil {
