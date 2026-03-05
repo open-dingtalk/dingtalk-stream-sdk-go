@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"io"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/gorilla/websocket"
 
@@ -144,28 +146,33 @@ func (cli *StreamClient) processLoop() {
 	readChan := make(chan []byte)
 	pongChan := make(chan struct{})
 	closeChan := make(chan struct{})
-	defer func() { close(closeChan) }()
-	defer func() { close(pongChan) }()
-	defer func() { close(readChan) }()
+	var wg errgroup.Group
+
+	defer func() {
+		wg.Wait()
+		close(closeChan)
+		close(pongChan)
+		close(readChan)
+	}()
 
 	cli.conn.SetPongHandler(func(appData string) error {
 		pongChan <- struct{}{}
 		return nil
 	})
 	//开始启动协程读数据
-	go func() {
+	wg.Go(func() error {
 		for {
 			messageType, message, err := cli.conn.ReadMessage()
 			if err != nil {
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
 				closeChan <- struct{}{}
-				return
+				return nil
 			}
 			if messageType == websocket.TextMessage {
 				readChan <- message
 			}
 		}
-	}()
+	})
 
 	//循环处理事件
 	for {
@@ -185,16 +192,16 @@ func (cli *StreamClient) processLoop() {
 				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
 				return
 			}
-			go func() {
+			wg.Go(func() error {
 				select {
 				case <-pongChan:
-					return
+					return nil
 				case <-time.After(5 * time.Second):
 					logger.GetLogger().Errorf("ping time out, connection is closing")
 					closeChan <- struct{}{}
-					return
+					return nil
 				}
-			}()
+			})
 		case <-closeChan:
 			return
 		}
