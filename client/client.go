@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"io"
 	"net/http"
 	"net/url"
@@ -14,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
@@ -141,34 +140,50 @@ func (cli *StreamClient) processLoop() {
 		return
 	}
 
+	loopCtx, cancelLoop := context.WithCancel(context.Background())
 	readChan := make(chan []byte)
-	pongChan := make(chan struct{})
-	closeChan := make(chan struct{})
-	defer func() { close(closeChan) }()
-	defer func() { close(pongChan) }()
-	defer func() { close(readChan) }()
+	pongChan := make(chan any)
+	defer func() {
+		cancelLoop()
+	}()
 
 	cli.conn.SetPongHandler(func(appData string) error {
-		pongChan <- struct{}{}
+		select {
+		case pongChan <- struct{}{}:
+		default:
+		}
 		return nil
 	})
 	//开始启动协程读数据
 	go func() {
+		defer close(readChan)
 		for {
+			select {
+			case <-loopCtx.Done():
+				return
+			default:
+			}
 			messageType, message, err := cli.conn.ReadMessage()
 			if err != nil {
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-				closeChan <- struct{}{}
+				cancelLoop()
 				return
 			}
 			if messageType == websocket.TextMessage {
-				readChan <- message
+				select {
+				case readChan <- message:
+				case <-loopCtx.Done():
+					return
+				}
 			}
 		}
 	}()
 
 	//循环处理事件
 	for {
+		if loopCtx.Err() != nil {
+			return
+		}
 		timer := time.NewTimer(cli.keepAliveIdle)
 		select {
 		case msg, ok := <-readChan:
@@ -191,11 +206,14 @@ func (cli *StreamClient) processLoop() {
 					return
 				case <-time.After(5 * time.Second):
 					logger.GetLogger().Errorf("ping time out, connection is closing")
-					closeChan <- struct{}{}
+					cancelLoop()
+					return
+				case <-loopCtx.Done():
 					return
 				}
 			}()
-		case <-closeChan:
+		case <-loopCtx.Done():
+			timer.Stop()
 			return
 		}
 	}
