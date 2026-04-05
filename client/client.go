@@ -142,14 +142,16 @@ func (cli *StreamClient) processLoop() {
 
 	loopCtx, cancelLoop := context.WithCancel(context.Background())
 	readChan := make(chan []byte)
-	pongChan := make(chan struct{})
+	pongChan := make(chan any)
 	defer func() {
 		cancelLoop()
-		close(pongChan)
 	}()
 
 	cli.conn.SetPongHandler(func(appData string) error {
-		pongChan <- struct{}{}
+		select {
+		case pongChan <- struct{}{}:
+		default:
+		}
 		return nil
 	})
 	//开始启动协程读数据
@@ -179,6 +181,9 @@ func (cli *StreamClient) processLoop() {
 
 	//循环处理事件
 	for {
+		if loopCtx.Err() != nil {
+			return
+		}
 		timer := time.NewTimer(cli.keepAliveIdle)
 		select {
 		case msg, ok := <-readChan:
