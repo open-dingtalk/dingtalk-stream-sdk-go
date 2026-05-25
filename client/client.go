@@ -150,7 +150,6 @@ func (cli *StreamClient) processLoop() {
 	pongChan := make(chan struct{})
 	defer func() {
 		cancelLoop()
-		close(pongChan)
 	}()
 
 	cli.conn.SetPongHandler(func(appData string) error {
