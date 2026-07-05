@@ -141,33 +141,46 @@ func (cli *StreamClient) processLoop() {
 		return
 	}
 
+	// 使用 context 替代 closeChan，避免子 goroutine 向已关闭的 channel 发送导致 panic
+	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/27
+	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/28
+	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/32
+	loopCtx, cancelLoop := context.WithCancel(context.Background())
 	readChan := make(chan []byte)
 	pongChan := make(chan struct{})
-	closeChan := make(chan struct{})
-	defer func() { close(closeChan) }()
-	defer func() { close(pongChan) }()
-	defer func() { close(readChan) }()
+	defer func() {
+		cancelLoop()
+	}()
 
 	cli.conn.SetPongHandler(func(appData string) error {
-		pongChan <- struct{}{}
+		select {
+		case pongChan <- struct{}{}:
+		case <-loopCtx.Done():
+		}
 		return nil
 	})
-	//开始启动协程读数据
+
+	// 读消息 goroutine，退出时关闭 readChan 通知主循环
 	go func() {
+		defer close(readChan)
 		for {
 			messageType, message, err := cli.conn.ReadMessage()
 			if err != nil {
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-				closeChan <- struct{}{}
+				cancelLoop()
 				return
 			}
 			if messageType == websocket.TextMessage {
-				readChan <- message
+				select {
+				case readChan <- message:
+				case <-loopCtx.Done():
+					return
+				}
 			}
 		}
 	}()
 
-	//循环处理事件
+	// 主事件循环
 	for {
 		timer := time.NewTimer(cli.keepAliveIdle)
 		select {
@@ -191,11 +204,14 @@ func (cli *StreamClient) processLoop() {
 					return
 				case <-time.After(5 * time.Second):
 					logger.GetLogger().Errorf("ping time out, connection is closing")
-					closeChan <- struct{}{}
+					cancelLoop()
+					return
+				case <-loopCtx.Done():
 					return
 				}
 			}()
-		case <-closeChan:
+		case <-loopCtx.Done():
+			timer.Stop()
 			return
 		}
 	}

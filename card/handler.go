@@ -24,7 +24,10 @@ func (h *DefaultCardCallbackFrameHandler) OnEventReceived(ctx context.Context, d
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal([]byte(msgData.Content), &msgData.CardActionData)
+	err = json.Unmarshal([]byte(msgData.Content), &msgData.CardActionData)
+	if err != nil {
+		return nil, err
+	}
 
 	if h.defaultHandler == nil {
 		return payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKHandlerNotFound), nil
