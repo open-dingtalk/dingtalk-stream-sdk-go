@@ -30,11 +30,19 @@ func WithSubscription(stype, stopic string, frameHandler handler.IFrameHandler) 
 	}
 }
 
+// WithKeepAlive sets idle duration before the client sends a websocket ping.
+// Pass 0 (or negative) to disable client-side websocket ping and rely on
+// application-level system/ping only. Values in (0, 3s) are raised to 3s.
 func WithKeepAlive(keepAliveIdle time.Duration) ClientOption {
 	return func(client *StreamClient) {
-		if keepAliveIdle >= 3*time.Second {
-			client.keepAliveIdle = keepAliveIdle
+		if keepAliveIdle <= 0 {
+			client.keepAliveIdle = 0
+			return
 		}
+		if keepAliveIdle < 3*time.Second {
+			keepAliveIdle = 3 * time.Second
+		}
+		client.keepAliveIdle = keepAliveIdle
 	}
 }
 

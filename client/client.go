@@ -136,38 +136,47 @@ func (cli *StreamClient) processLoop() {
 		}
 	}()
 
-	if cli.conn == nil {
+	cli.mutex.Lock()
+	conn := cli.conn
+	keepAliveIdle := cli.keepAliveIdle
+	cli.mutex.Unlock()
+
+	if conn == nil {
 		logger.GetLogger().Errorf("connection process connect nil, maybe disconnected.")
 		return
 	}
 
-	// 使用 context 替代 closeChan，避免子 goroutine 向已关闭的 channel 发送导致 panic
+	// Use context instead of closeChan to avoid send-on-closed-channel panic.
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/27
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/28
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/32
 	loopCtx, cancelLoop := context.WithCancel(context.Background())
-	readChan := make(chan []byte)
-	pongChan := make(chan struct{})
-	defer func() {
-		cancelLoop()
-	}()
+	defer cancelLoop()
 
-	cli.conn.SetPongHandler(func(appData string) error {
+	// Buffered + non-blocking send: late/extra pongs must never block ReadMessage.
+	pongReceived := make(chan struct{}, 1)
+	conn.SetPongHandler(func(string) error {
 		select {
-		case pongChan <- struct{}{}:
-		case <-loopCtx.Done():
+		case pongReceived <- struct{}{}:
+		default:
 		}
 		return nil
 	})
 
+	readChan := make(chan []byte)
 	// 读消息 goroutine，退出时关闭 readChan 通知主循环
 	go func() {
-		defer close(readChan)
+		defer func() {
+			if err := recover(); err != nil {
+				logger.GetLogger().Errorf("connection read loop panic, error=[%s]", err)
+			}
+			close(readChan)
+			cancelLoop()
+		}()
 		for {
-			messageType, message, err := cli.conn.ReadMessage()
+			messageType, message, err := conn.ReadMessage()
 			if err != nil {
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-				cancelLoop()
 				return
 			}
 			if messageType == websocket.TextMessage {
@@ -180,41 +189,92 @@ func (cli *StreamClient) processLoop() {
 		}
 	}()
 
-	// 主事件循环
+	const pingWait = 5 * time.Second
+
 	for {
-		timer := time.NewTimer(cli.keepAliveIdle)
+		var idleTimer <-chan time.Time
+		var timer *time.Timer
+		if keepAliveIdle > 0 {
+			timer = time.NewTimer(keepAliveIdle)
+			idleTimer = timer.C
+		}
+
 		select {
 		case msg, ok := <-readChan:
-			timer.Stop()
-			if ok {
-				go cli.processDataFrame(msg)
-			} else {
+			stopTimer(timer)
+			if !ok {
 				logger.GetLogger().Errorf("connection process is closed")
 				return
 			}
-		case <-timer.C:
-			e := cli.conn.WriteMessage(websocket.PingMessage, nil)
-			if e != nil {
-				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
+			go cli.processDataFrame(msg)
+
+		case <-idleTimer:
+			// Drain a stale pong signal from a previous round.
+			select {
+			case <-pongReceived:
+			default:
+			}
+
+			if err := cli.writeMessage(websocket.PingMessage, nil); err != nil {
+				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", err)
 				return
 			}
-			go func() {
-				select {
-				case <-pongChan:
-					return
-				case <-time.After(5 * time.Second):
-					logger.GetLogger().Errorf("ping time out, connection is closing")
-					cancelLoop()
-					return
-				case <-loopCtx.Done():
+
+			// Wait for pong synchronously so we never race multiple waiters on one channel.
+			select {
+			case <-pongReceived:
+				// alive
+			case msg, ok := <-readChan:
+				// Any inbound traffic means the connection is still up.
+				if !ok {
+					logger.GetLogger().Errorf("connection process is closed")
 					return
 				}
-			}()
+				go cli.processDataFrame(msg)
+			case <-time.After(pingWait):
+				logger.GetLogger().Errorf("ping time out, connection is closing")
+				_ = conn.Close()
+				cancelLoop()
+				return
+			case <-loopCtx.Done():
+				return
+			}
+
 		case <-loopCtx.Done():
-			timer.Stop()
+			stopTimer(timer)
 			return
 		}
 	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func (cli *StreamClient) writeMessage(messageType int, data []byte) error {
+	cli.mutex.Lock()
+	defer cli.mutex.Unlock()
+	if cli.conn == nil {
+		return errors.New("disconnected")
+	}
+	return cli.conn.WriteMessage(messageType, data)
+}
+
+func (cli *StreamClient) writeJSON(v interface{}) error {
+	cli.mutex.Lock()
+	defer cli.mutex.Unlock()
+	if cli.conn == nil {
+		return errors.New("disconnected")
+	}
+	return cli.conn.WriteJSON(v)
 }
 
 func (cli *StreamClient) processDataFrame(rawData []byte) {
@@ -297,17 +357,24 @@ func (cli *StreamClient) reconnect() {
 
 	cli.Close()
 
-	for {
+	// Backoff before retrying to avoid credential reconnect storms / server-side throttling.
+	backoff := 3 * time.Second
+	const maxBackoff = 60 * time.Second
+
+	for attempt := 1; ; attempt++ {
+		time.Sleep(backoff)
 		err := cli.Start(context.Background())
 		if err != nil {
-			logger.GetLogger().Errorf("StreamClient reconnect error. error=[%s]", err)
-			time.Sleep(time.Second * 3)
-		} else {
-			logger.GetLogger().Infof("StreamClient reconnect success")
-			return
+			logger.GetLogger().Errorf("StreamClient reconnect error, attempt=[%d] error=[%s]", attempt, err)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
+		logger.GetLogger().Infof("StreamClient reconnect success")
+		return
 	}
-
 }
 
 func (cli *StreamClient) GetHandler(stype, stopic string) (handler.IFrameHandler, error) {
@@ -467,11 +534,11 @@ func (cli *StreamClient) SendDataFrameResponse(ctx context.Context, resp *payloa
 		return errors.New("SendDataFrameResponseError_ResponseNil")
 	}
 
-	if cli.conn == nil {
-		logger.GetLogger().Errorf("SendDataFrameResponse error, conn nil, maybe disconnected.")
-		return errors.New("disconnected")
+	if err := cli.writeJSON(resp); err != nil {
+		logger.GetLogger().Errorf("SendDataFrameResponse error, conn nil or write failed, error=[%s]", err)
+		return err
 	}
-	return cli.conn.WriteJSON(resp)
+	return nil
 }
 
 // 通用注册函数
