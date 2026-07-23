@@ -760,7 +760,6 @@ func dialTestWS(t *testing.T) (endpoint string, closeFn func(), conn *websocket.
 	}, c
 }
 
-
 func newTestWebsocketConn(t *testing.T, serverHandler func(*websocket.Conn)) *websocket.Conn {
 	t.Helper()
 
