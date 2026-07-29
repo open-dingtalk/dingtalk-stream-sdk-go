@@ -119,12 +119,12 @@ func TestDingtalkOpenStreamClient_Close(t *testing.T) {
 }
 
 func TestDingtalkOpenStreamClient_reconnect(t *testing.T) {
-	var opens atomic.Int64
+	var opens int64
 	wsEndpoint, closeWS := startEchoWSServer(t)
 	defer closeWS()
 
 	openAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := opens.Add(1)
+		n := atomic.AddInt64(&opens, 1)
 		if n == 1 {
 			http.Error(w, `{"code":"Throttling","message":"busy"}`, http.StatusTooManyRequests)
 			return
@@ -145,17 +145,17 @@ func TestDingtalkOpenStreamClient_reconnect(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		cli.reconnect()
+		cli.reconnect(cli.lifecycleCtx)
 		close(done)
 	}()
 
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("reconnect did not succeed with backoff")
 	}
 
-	assert.GreaterOrEqual(t, opens.Load(), int64(2))
+	assert.GreaterOrEqual(t, atomic.LoadInt64(&opens), int64(2))
 	assert.NotNil(t, cli.conn)
 	cli.Close()
 }
@@ -355,7 +355,7 @@ func TestProcessLoopMessageDuringPingWaitKeepsAlive(t *testing.T) {
 }
 
 func TestProcessLoopPingPongKeepsConnection(t *testing.T) {
-	var gotPing atomic.Bool
+	var gotPing uint32
 	upgrader := websocket.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +366,7 @@ func TestProcessLoopPingPongKeepsConnection(t *testing.T) {
 		defer conn.Close()
 
 		conn.SetPingHandler(func(appData string) error {
-			gotPing.Store(true)
+			atomic.StoreUint32(&gotPing, 1)
 			return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
 		})
 
@@ -391,7 +391,9 @@ func TestProcessLoopPingPongKeepsConnection(t *testing.T) {
 		close(done)
 	}()
 
-	require.Eventually(t, gotPing.Load, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return atomic.LoadUint32(&gotPing) == 1
+	}, time.Second, 10*time.Millisecond)
 	require.NoError(t, cli.writeMessage(websocket.TextMessage, []byte(`{"type":"SYSTEM"}`)))
 
 	cli.Close()
@@ -475,8 +477,8 @@ func TestProcessLoopLatePongDoesNotBlockReadPath(t *testing.T) {
 
 func TestProcessLoopConcurrentMessagesAndPing(t *testing.T) {
 	var (
-		gotPing   atomic.Int64
-		gotClient atomic.Int64
+		gotPing   int64
+		gotClient int64
 	)
 	upgrader := websocket.Upgrader{}
 
@@ -488,7 +490,7 @@ func TestProcessLoopConcurrentMessagesAndPing(t *testing.T) {
 		defer conn.Close()
 
 		conn.SetPingHandler(func(appData string) error {
-			gotPing.Add(1)
+			atomic.AddInt64(&gotPing, 1)
 			return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
 		})
 
@@ -506,7 +508,7 @@ func TestProcessLoopConcurrentMessagesAndPing(t *testing.T) {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
-			gotClient.Add(1)
+			atomic.AddInt64(&gotClient, 1)
 		}
 	}))
 	defer server.Close()
@@ -539,8 +541,8 @@ func TestProcessLoopConcurrentMessagesAndPing(t *testing.T) {
 	}
 	wg.Wait()
 
-	require.Eventually(t, func() bool { return gotPing.Load() >= 1 }, 2*time.Second, 20*time.Millisecond)
-	require.Eventually(t, func() bool { return gotClient.Load() >= 1 }, 2*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return atomic.LoadInt64(&gotPing) >= 1 }, 2*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return atomic.LoadInt64(&gotClient) >= 1 }, 2*time.Second, 20*time.Millisecond)
 
 	cli.Close()
 	select {
@@ -589,7 +591,7 @@ func TestProcessLoopUnsolicitedPongFlood(t *testing.T) {
 }
 
 func TestProcessLoopAppLevelPingWithKeepAliveDisabled(t *testing.T) {
-	var gotPong atomic.Bool
+	var gotPong uint32
 	upgrader := websocket.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -607,7 +609,7 @@ func TestProcessLoopAppLevelPingWithKeepAliveDisabled(t *testing.T) {
 			return
 		}
 		if strings.Contains(string(data), "app-ping") {
-			gotPong.Store(true)
+			atomic.StoreUint32(&gotPong, 1)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}))
@@ -625,7 +627,9 @@ func TestProcessLoopAppLevelPingWithKeepAliveDisabled(t *testing.T) {
 		close(done)
 	}()
 
-	require.Eventually(t, gotPong.Load, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return atomic.LoadUint32(&gotPong) == 1
+	}, time.Second, 10*time.Millisecond)
 
 	cli.Close()
 	select {
@@ -636,7 +640,7 @@ func TestProcessLoopAppLevelPingWithKeepAliveDisabled(t *testing.T) {
 }
 
 func TestProcessLoopMultiplePingRounds(t *testing.T) {
-	var pingCount atomic.Int64
+	var pingCount int64
 	upgrader := websocket.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -647,7 +651,7 @@ func TestProcessLoopMultiplePingRounds(t *testing.T) {
 		defer conn.Close()
 
 		conn.SetPingHandler(func(appData string) error {
-			pingCount.Add(1)
+			atomic.AddInt64(&pingCount, 1)
 			return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
 		})
 		for {
@@ -671,7 +675,7 @@ func TestProcessLoopMultiplePingRounds(t *testing.T) {
 		close(done)
 	}()
 
-	require.Eventually(t, func() bool { return pingCount.Load() >= 3 }, 2*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return atomic.LoadInt64(&pingCount) >= 3 }, 2*time.Second, 20*time.Millisecond)
 
 	cli.Close()
 	select {
@@ -689,7 +693,7 @@ func TestWriteHelpersRejectAfterClose(t *testing.T) {
 }
 
 func TestConcurrentWritesSerialized(t *testing.T) {
-	var reads atomic.Int64
+	var reads int64
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -701,7 +705,7 @@ func TestConcurrentWritesSerialized(t *testing.T) {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
 			}
-			reads.Add(1)
+			atomic.AddInt64(&reads, 1)
 		}
 	}))
 	defer server.Close()
@@ -723,8 +727,182 @@ func TestConcurrentWritesSerialized(t *testing.T) {
 	}
 	wg.Wait()
 
-	require.Eventually(t, func() bool { return reads.Load() >= 50 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return atomic.LoadInt64(&reads) >= 50 }, 2*time.Second, 10*time.Millisecond)
 	cli.Close()
+}
+
+func TestCloseDoesNotWaitForBlockedWrite(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	releaseServer := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Do not read: a sufficiently large client write will block until Close
+		// closes the socket.
+		<-releaseServer
+	}))
+	defer server.Close()
+	defer close(releaseServer)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL), nil)
+	require.NoError(t, err)
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = conn
+
+	writeStarted := make(chan struct{})
+	writeDone := make(chan struct{})
+	go func() {
+		close(writeStarted)
+		_ = cli.writeMessage(websocket.BinaryMessage, make([]byte, 64<<20))
+		close(writeDone)
+	}()
+	<-writeStarted
+	time.Sleep(100 * time.Millisecond)
+
+	closeDone := make(chan struct{})
+	go func() {
+		cli.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked behind an in-flight websocket write")
+	}
+
+	select {
+	case <-writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked websocket write did not exit after Close")
+	}
+}
+
+func TestProcessDataFrameResponseUsesSourceConnection(t *testing.T) {
+	oldMessages := make(chan string, 1)
+	oldConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_, data, err := conn.ReadMessage()
+		if err == nil {
+			oldMessages <- string(data)
+		}
+	})
+
+	newMessages := make(chan string, 1)
+	newConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_, data, err := conn.ReadMessage()
+		if err == nil {
+			newMessages <- string(data)
+		}
+	})
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = newConn
+
+	raw := []byte(`{"headers":{"messageId":"source-conn","topic":"ping"},"type":"SYSTEM","data":"{}"}`)
+	cli.processDataFrameForConnection(oldConn, raw)
+
+	select {
+	case message := <-oldMessages:
+		assert.Contains(t, message, "source-conn")
+	case <-time.After(time.Second):
+		t.Fatal("response was not written to the source connection")
+	}
+
+	select {
+	case message := <-newMessages:
+		t.Fatalf("old frame response leaked to replacement connection: %s", message)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestOldProcessLoopDoesNotDetachReplacementConnection(t *testing.T) {
+	oldConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		_ = conn.Close()
+	})
+	newConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = newConn
+	cli.sessionId = "replacement"
+
+	done := make(chan struct{})
+	go func() {
+		cli.processConnection(oldConn, time.Hour)
+		close(done)
+	}()
+	waitProcessLoopExit(t, done, time.Second)
+
+	cli.mutex.Lock()
+	currentConn := cli.conn
+	sessionID := cli.sessionId
+	cli.mutex.Unlock()
+	assert.Same(t, newConn, currentConn)
+	assert.Equal(t, "replacement", sessionID)
+}
+
+func TestCloseCancelsReconnectBackoff(t *testing.T) {
+	cli := NewStreamClient(
+		WithAppCredential(NewAppCredentialConfig("cid", "csecret")),
+		WithAutoReconnect(true),
+	)
+	lifecycleCtx := cli.lifecycleCtx
+
+	done := make(chan struct{})
+	go func() {
+		cli.reconnect(lifecycleCtx)
+		close(done)
+	}()
+
+	cli.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect backoff was not canceled by Close")
+	}
+}
+
+func TestOldDisconnectFrameDoesNotCloseReplacementConnection(t *testing.T) {
+	oldConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	newConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = newConn
+	cli.sessionId = "replacement"
+
+	ctx := context.WithValue(context.Background(), connectionContextKey{}, oldConn)
+	_, err := cli.OnDisconnect(ctx, &payload.DataFrame{})
+	require.NoError(t, err)
+
+	cli.mutex.Lock()
+	currentConn := cli.conn
+	sessionID := cli.sessionId
+	cli.mutex.Unlock()
+	assert.Same(t, newConn, currentConn)
+	assert.Equal(t, "replacement", sessionID)
 }
 
 func wsURL(httpURL string) string {
