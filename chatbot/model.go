@@ -32,6 +32,7 @@ type BotCallbackDataModel struct {
 	IsInAtList                bool                         `json:"isInAtList"`
 	SessionWebhook            string                       `json:"sessionWebhook"`
 	Text                      BotCallbackDataTextModel     `json:"text"`
+	RobotCode                 string                       `json:"robotCode"`
 	Msgtype                   string                       `json:"msgtype"`
 	Content                   interface{}                  `json:"content"`
 }

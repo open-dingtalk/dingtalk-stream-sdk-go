@@ -30,10 +30,30 @@ func WithSubscription(stype, stopic string, frameHandler handler.IFrameHandler) 
 	}
 }
 
+// WithKeepAlive sets idle duration before the client sends a websocket ping.
+// Pass 0 (or negative) to disable client-side websocket ping and rely on
+// application-level system/ping only. Values in (0, 3s) are raised to 3s.
 func WithKeepAlive(keepAliveIdle time.Duration) ClientOption {
 	return func(client *StreamClient) {
-		if keepAliveIdle >= 3*time.Second {
-			client.keepAliveIdle = keepAliveIdle
+		if keepAliveIdle <= 0 {
+			client.keepAliveIdle = 0
+			return
+		}
+		if keepAliveIdle < 3*time.Second {
+			keepAliveIdle = 3 * time.Second
+		}
+		client.keepAliveIdle = keepAliveIdle
+	}
+}
+
+// WithMaxPendingHandlers bounds concurrently running EVENT and CALLBACK
+// handlers. When the limit is reached, new application frames are left
+// unacknowledged so the server can retry them. Non-positive values use the
+// default limit of 100.
+func WithMaxPendingHandlers(maxHandlers int) ClientOption {
+	return func(client *StreamClient) {
+		if maxHandlers > 0 {
+			client.maxHandlers = maxHandlers
 		}
 	}
 }

@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sync"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/open-dingtalk/dingtalk-stream-sdk-go/card"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/handler"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/logger"
@@ -38,15 +39,34 @@ type StreamClient struct {
 	conn          *websocket.Conn
 	sessionId     string
 	mutex         sync.Mutex
+	writeMutex    sync.Mutex
+	startMutex    sync.Mutex
+	lifecycleCtx  context.Context
+	cancel        context.CancelFunc
 	extras        map[string]string
 	openApiHost   string
 	proxy         string
 	keepAliveIdle time.Duration
+	writeTimeout  time.Duration
+	handlerSlots  chan struct{}
+	maxHandlers   int
 }
 
+type connectionContextKey struct{}
+
+const (
+	defaultWriteTimeout       = 5 * time.Second
+	defaultMaxPendingHandlers = 100
+)
+
 func NewStreamClient(options ...ClientOption) *StreamClient {
+	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	cli := &StreamClient{
 		keepAliveIdle: 120 * time.Second,
+		writeTimeout:  defaultWriteTimeout,
+		maxHandlers:   defaultMaxPendingHandlers,
+		lifecycleCtx:  lifecycleCtx,
+		cancel:        cancel,
 	}
 
 	defaultOptions := []ClientOption{
@@ -67,23 +87,39 @@ func NewStreamClient(options ...ClientOption) *StreamClient {
 
 		option(cli)
 	}
+	cli.handlerSlots = make(chan struct{}, cli.maxHandlers)
 
 	return cli
 }
 
 func (cli *StreamClient) Start(ctx context.Context) error {
-	if cli.conn != nil {
-		return nil
-	}
+	return cli.start(ctx, nil)
+}
+
+func (cli *StreamClient) start(ctx context.Context, expectedLifecycle context.Context) error {
+	cli.startMutex.Lock()
+	defer cli.startMutex.Unlock()
 
 	cli.mutex.Lock()
-	defer cli.mutex.Unlock()
-
 	if cli.conn != nil {
+		cli.mutex.Unlock()
 		return nil
 	}
+	if expectedLifecycle == nil {
+		if cli.lifecycleCtx == nil || cli.lifecycleCtx.Err() != nil {
+			cli.lifecycleCtx, cli.cancel = context.WithCancel(context.Background())
+		}
+	} else if cli.lifecycleCtx != expectedLifecycle || expectedLifecycle.Err() != nil {
+		cli.mutex.Unlock()
+		return context.Canceled
+	}
+	lifecycleCtx := cli.lifecycleCtx
+	cli.mutex.Unlock()
 
-	endpoint, err := cli.GetConnectionEndpoint(ctx)
+	connectCtx, cancelConnect := contextWithLifecycle(ctx, lifecycleCtx)
+	defer cancelConnect()
+
+	endpoint, err := cli.GetConnectionEndpoint(connectCtx)
 	if err != nil {
 		return err
 	}
@@ -106,68 +142,111 @@ func (cli *StreamClient) Start(ctx context.Context) error {
 		}
 	}
 
-	conn, resp, err := dialer.Dial(wssUrl, header)
+	conn, resp, err := dialer.DialContext(connectCtx, wssUrl, header)
 	if err != nil {
+		closeWebSocketDialResources(conn, resp)
 		return err
 	}
 
 	// 建连失败
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp != nil && resp.StatusCode >= http.StatusBadRequest {
+		_ = conn.Close()
 		return utils.ErrorFromHttpResponseBody(resp)
 	}
 
+	cli.mutex.Lock()
+	if cli.lifecycleCtx != lifecycleCtx || lifecycleCtx.Err() != nil {
+		cli.mutex.Unlock()
+		_ = conn.Close()
+		return context.Canceled
+	}
+	if cli.conn != nil {
+		cli.mutex.Unlock()
+		_ = conn.Close()
+		return nil
+	}
 	cli.conn = conn
 	cli.sessionId = endpoint.Ticket
+	keepAliveIdle := cli.keepAliveIdle
+	sessionID := cli.sessionId
+	cli.mutex.Unlock()
 
-	logger.GetLogger().Infof("connect success, sessionId=[%s]", cli.sessionId)
+	logger.GetLogger().Infof("connect success, sessionId=[%s]", sessionID)
 
-	go cli.processLoop()
+	go cli.processConnection(conn, keepAliveIdle)
 
 	return nil
 }
 
+func contextWithLifecycle(ctx, lifecycleCtx context.Context) (context.Context, context.CancelFunc) {
+	connectCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-lifecycleCtx.Done():
+			cancel()
+		case <-connectCtx.Done():
+		}
+	}()
+	return connectCtx, cancel
+}
+
 func (cli *StreamClient) processLoop() {
+	cli.mutex.Lock()
+	conn := cli.conn
+	keepAliveIdle := cli.keepAliveIdle
+	cli.mutex.Unlock()
+
+	cli.processConnection(conn, keepAliveIdle)
+}
+
+func (cli *StreamClient) processConnection(conn *websocket.Conn, keepAliveIdle time.Duration) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.GetLogger().Errorf("connection process panic due to unknown reason, error=[%s]", err)
 		}
-		if cli.AutoReconnect {
-			go cli.reconnect()
+		lifecycleCtx, shouldReconnect := cli.detachConnection(conn)
+		cli.closeConnection(conn)
+		if shouldReconnect {
+			go cli.reconnect(lifecycleCtx)
 		}
 	}()
 
-	if cli.conn == nil {
+	if conn == nil {
 		logger.GetLogger().Errorf("connection process connect nil, maybe disconnected.")
 		return
 	}
 
-	// 使用 context 替代 closeChan，避免子 goroutine 向已关闭的 channel 发送导致 panic
+	// Use context instead of closeChan to avoid send-on-closed-channel panic.
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/27
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/28
 	// see: https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/32
 	loopCtx, cancelLoop := context.WithCancel(context.Background())
-	readChan := make(chan []byte)
-	pongChan := make(chan struct{})
-	defer func() {
-		cancelLoop()
-	}()
+	defer cancelLoop()
 
-	cli.conn.SetPongHandler(func(appData string) error {
+	// Buffered + non-blocking send: late/extra pongs must never block ReadMessage.
+	pongReceived := make(chan struct{}, 1)
+	conn.SetPongHandler(func(string) error {
 		select {
-		case pongChan <- struct{}{}:
-		case <-loopCtx.Done():
+		case pongReceived <- struct{}{}:
+		default:
 		}
 		return nil
 	})
 
+	readChan := make(chan []byte)
 	// 读消息 goroutine，退出时关闭 readChan 通知主循环
 	go func() {
-		defer close(readChan)
+		defer func() {
+			if err := recover(); err != nil {
+				logger.GetLogger().Errorf("connection read loop panic, error=[%s]", err)
+			}
+			close(readChan)
+			cancelLoop()
+		}()
 		for {
-			messageType, message, err := cli.conn.ReadMessage()
+			messageType, message, err := conn.ReadMessage()
 			if err != nil {
 				logger.GetLogger().Errorf("connection process read message error: messageType=[%d] message=[%s] error=[%s]", messageType, string(message), err)
-				cancelLoop()
 				return
 			}
 			if messageType == websocket.TextMessage {
@@ -180,44 +259,185 @@ func (cli *StreamClient) processLoop() {
 		}
 	}()
 
-	// 主事件循环
+	const pingWait = 5 * time.Second
+
 	for {
-		timer := time.NewTimer(cli.keepAliveIdle)
+		var idleTimer <-chan time.Time
+		var timer *time.Timer
+		if keepAliveIdle > 0 {
+			timer = time.NewTimer(keepAliveIdle)
+			idleTimer = timer.C
+		}
+
 		select {
 		case msg, ok := <-readChan:
-			timer.Stop()
-			if ok {
-				go cli.processDataFrame(msg)
-			} else {
+			stopTimer(timer)
+			if !ok {
 				logger.GetLogger().Errorf("connection process is closed")
 				return
 			}
-		case <-timer.C:
-			e := cli.conn.WriteMessage(websocket.PingMessage, nil)
-			if e != nil {
-				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", e)
+			cli.dispatchDataFrameForConnectionContext(loopCtx, conn, msg)
+
+		case <-idleTimer:
+			// Drain a stale pong signal from a previous round.
+			select {
+			case <-pongReceived:
+			default:
+			}
+
+			if err := cli.writeControlToConnection(conn, websocket.PingMessage, nil); err != nil {
+				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", err)
 				return
 			}
-			go func() {
-				select {
-				case <-pongChan:
-					return
-				case <-time.After(5 * time.Second):
-					logger.GetLogger().Errorf("ping time out, connection is closing")
-					cancelLoop()
-					return
-				case <-loopCtx.Done():
+
+			// Wait for pong synchronously so we never race multiple waiters on one channel.
+			select {
+			case <-pongReceived:
+				// alive
+			case msg, ok := <-readChan:
+				// Any inbound traffic means the connection is still up.
+				if !ok {
+					logger.GetLogger().Errorf("connection process is closed")
 					return
 				}
-			}()
+				cli.dispatchDataFrameForConnectionContext(loopCtx, conn, msg)
+			case <-time.After(pingWait):
+				logger.GetLogger().Errorf("ping time out, connection is closing")
+				_ = conn.Close()
+				cancelLoop()
+				return
+			case <-loopCtx.Done():
+				return
+			}
+
 		case <-loopCtx.Done():
-			timer.Stop()
+			stopTimer(timer)
 			return
 		}
 	}
 }
 
+func stopTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func (cli *StreamClient) writeMessage(messageType int, data []byte) error {
+	cli.mutex.Lock()
+	conn := cli.conn
+	cli.mutex.Unlock()
+
+	return cli.writeMessageToConnection(conn, messageType, data)
+}
+
+func (cli *StreamClient) writeMessageToConnection(conn *websocket.Conn, messageType int, data []byte) error {
+	if conn == nil {
+		return errors.New("disconnected")
+	}
+
+	cli.writeMutex.Lock()
+	defer cli.writeMutex.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(cli.getWriteTimeout())); err != nil {
+		return err
+	}
+	return conn.WriteMessage(messageType, data)
+}
+
+func (cli *StreamClient) writeControlToConnection(conn *websocket.Conn, messageType int, data []byte) error {
+	if conn == nil {
+		return errors.New("disconnected")
+	}
+
+	// Gorilla permits WriteControl concurrently with data writes. Keeping
+	// heartbeat control frames out of writeMutex ensures a blocked application
+	// write cannot prevent keepalive from timing out and closing the connection.
+	return conn.WriteControl(messageType, data, time.Now().Add(cli.getWriteTimeout()))
+}
+
+func (cli *StreamClient) writeJSON(v interface{}) error {
+	cli.mutex.Lock()
+	conn := cli.conn
+	cli.mutex.Unlock()
+
+	return cli.writeJSONToConnection(conn, v)
+}
+
+func (cli *StreamClient) writeJSONToConnection(conn *websocket.Conn, v interface{}) error {
+	if conn == nil {
+		return errors.New("disconnected")
+	}
+
+	cli.writeMutex.Lock()
+	defer cli.writeMutex.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(cli.getWriteTimeout())); err != nil {
+		return err
+	}
+	return conn.WriteJSON(v)
+}
+
+func (cli *StreamClient) getWriteTimeout() time.Duration {
+	if cli.writeTimeout <= 0 {
+		return defaultWriteTimeout
+	}
+	return cli.writeTimeout
+}
+
 func (cli *StreamClient) processDataFrame(rawData []byte) {
+	cli.mutex.Lock()
+	conn := cli.conn
+	cli.mutex.Unlock()
+
+	cli.processDataFrameForConnection(conn, rawData)
+}
+
+func (cli *StreamClient) dispatchDataFrameForConnection(conn *websocket.Conn, rawData []byte) {
+	cli.dispatchDataFrameForConnectionContext(context.Background(), conn, rawData)
+}
+
+func (cli *StreamClient) dispatchDataFrameForConnectionContext(
+	ctx context.Context,
+	conn *websocket.Conn,
+	rawData []byte,
+) {
+	select {
+	case cli.handlerSlots <- struct{}{}:
+		go func() {
+			defer func() {
+				<-cli.handlerSlots
+			}()
+			cli.processDataFrameForConnectionContext(ctx, conn, rawData)
+		}()
+	default:
+		dataFrame, err := payload.DecodeDataFrame(rawData)
+		if err == nil && dataFrame != nil && dataFrame.Type == utils.SubscriptionTypeKSystem {
+			// System frames control connection lifecycle and must not be starved
+			// by slow application handlers. Process them synchronously to keep
+			// control-frame work bounded even if the server sends a burst.
+			cli.processDataFrameForConnectionContext(ctx, conn, rawData)
+			return
+		}
+		logger.GetLogger().Warningf(
+			"connection handler capacity reached, message is left unacknowledged for retry",
+		)
+	}
+}
+
+func (cli *StreamClient) processDataFrameForConnection(conn *websocket.Conn, rawData []byte) {
+	cli.processDataFrameForConnectionContext(context.Background(), conn, rawData)
+}
+
+func (cli *StreamClient) processDataFrameForConnectionContext(
+	ctx context.Context,
+	conn *websocket.Conn,
+	rawData []byte,
+) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.GetLogger().Errorf("connection processDataFrame panic, error=[%s]", err)
@@ -241,7 +461,11 @@ func (cli *StreamClient) processDataFrame(rawData []byte) {
 		// 没有注册handler，返回404
 		dataAck = payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKHandlerNotFound)
 	} else {
-		dataAck, err = frameHandler(context.Background(), dataFrame)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		frameContext := context.WithValue(ctx, connectionContextKey{}, conn)
+		dataAck, err = frameHandler(frameContext, dataFrame)
 
 		if err != nil && dataAck == nil {
 			dataAck = payload.NewErrorDataFrameResponse(err)
@@ -260,54 +484,109 @@ func (cli *StreamClient) processDataFrame(rawData []byte) {
 		dataAck.SetHeader(payload.DataFrameHeaderKContentType, payload.DataFrameContentTypeKJson)
 	}
 
-	errSend := cli.SendDataFrameResponse(context.Background(), dataAck)
+	errSend := cli.sendDataFrameResponse(conn, dataAck)
 	sentBytes, _ := json.Marshal(dataAck)
 	logger.GetLogger().Debugf("[wire] [websocket] local => remote:\n%s", string(sentBytes))
 
 	if errSend != nil {
 		logger.GetLogger().Errorf("connection processDataFrame send response error: error=[%s]", errSend)
 	}
+	if dataFrame.Type == utils.SubscriptionTypeKSystem && dataFrame.GetTopic() == "disconnect" {
+		// Acknowledge the server command on the source connection before
+		// closing it. Closing inside OnDisconnect makes the ACK write fail and
+		// causes the server to retry an already-processed disconnect command.
+		cli.closeOwnedConnection(conn)
+	}
+}
+
+func closeWebSocketDialResources(conn *websocket.Conn, resp *http.Response) {
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 }
 
 func (cli *StreamClient) Close() {
-	if cli.conn == nil {
-		return
+	cli.mutex.Lock()
+	conn := cli.conn
+	cli.conn = nil
+	cli.sessionId = ""
+	if cli.cancel != nil {
+		cli.cancel()
+	}
+	cli.mutex.Unlock()
+
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			logger.GetLogger().Errorf("StreamClient close. error=[%s]", err)
+		}
+	}
+}
+
+func (cli *StreamClient) detachConnection(conn *websocket.Conn) (context.Context, bool) {
+	if conn == nil {
+		return nil, false
 	}
 
 	cli.mutex.Lock()
 	defer cli.mutex.Unlock()
-
-	if cli.conn == nil {
-		return
+	if cli.conn != conn {
+		return nil, false
 	}
 
-	if err := cli.conn.Close(); err != nil {
-		logger.GetLogger().Errorf("StreamClient close. error=[%s]", err)
-	}
 	cli.conn = nil
 	cli.sessionId = ""
+	return cli.lifecycleCtx, cli.AutoReconnect
 }
 
-func (cli *StreamClient) reconnect() {
+func (cli *StreamClient) closeConnection(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+	if err := conn.Close(); err != nil {
+		logger.GetLogger().Errorf("StreamClient close. error=[%s]", err)
+	}
+}
+
+func (cli *StreamClient) reconnect(lifecycleCtx context.Context) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.GetLogger().Errorf("reconect panic due to unknown reason. error=[%s]", err)
 		}
 	}()
 
-	cli.Close()
+	// Backoff before retrying to avoid credential reconnect storms / server-side throttling.
+	backoff := 3 * time.Second
+	const maxBackoff = 60 * time.Second
+	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	for {
-		err := cli.Start(context.Background())
-		if err != nil {
-			logger.GetLogger().Errorf("StreamClient reconnect error. error=[%s]", err)
-			time.Sleep(time.Second * 3)
-		} else {
-			logger.GetLogger().Infof("StreamClient reconnect success")
+	for attempt := 1; ; attempt++ {
+		jitter := time.Duration(random.Int63n(int64(backoff/5) + 1))
+		timer := time.NewTimer(backoff + jitter)
+		select {
+		case <-timer.C:
+		case <-lifecycleCtx.Done():
+			stopTimer(timer)
 			return
 		}
-	}
 
+		err := cli.start(lifecycleCtx, lifecycleCtx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			logger.GetLogger().Errorf("StreamClient reconnect error, attempt=[%d] error=[%s]", attempt, err)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+		logger.GetLogger().Infof("StreamClient reconnect success")
+		return
+	}
 }
 
 func (cli *StreamClient) GetHandler(stype, stopic string) (handler.IFrameHandler, error) {
@@ -450,8 +729,19 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 func (cli *StreamClient) OnDisconnect(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
 	logger.GetLogger().Debugf("StreamClient.OnDisconnect")
 
+	if ctx != nil {
+		if _, ok := ctx.Value(connectionContextKey{}).(*websocket.Conn); ok {
+			return nil, nil
+		}
+	}
 	cli.Close()
 	return nil, nil
+}
+
+func (cli *StreamClient) closeOwnedConnection(conn *websocket.Conn) {
+	// Close only the connection that carried the disconnect frame. Its process
+	// loop decides whether it still owns the client state and should reconnect.
+	cli.closeConnection(conn)
 }
 
 func (cli *StreamClient) OnPing(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
@@ -463,15 +753,29 @@ func (cli *StreamClient) OnPing(ctx context.Context, df *payload.DataFrame) (*pa
 
 // 返回正常数据包
 func (cli *StreamClient) SendDataFrameResponse(ctx context.Context, resp *payload.DataFrameResponse) error {
+	if ctx != nil {
+		if conn, ok := ctx.Value(connectionContextKey{}).(*websocket.Conn); ok {
+			return cli.sendDataFrameResponse(conn, resp)
+		}
+	}
+
+	cli.mutex.Lock()
+	conn := cli.conn
+	cli.mutex.Unlock()
+
+	return cli.sendDataFrameResponse(conn, resp)
+}
+
+func (cli *StreamClient) sendDataFrameResponse(conn *websocket.Conn, resp *payload.DataFrameResponse) error {
 	if resp == nil {
 		return errors.New("SendDataFrameResponseError_ResponseNil")
 	}
 
-	if cli.conn == nil {
-		logger.GetLogger().Errorf("SendDataFrameResponse error, conn nil, maybe disconnected.")
-		return errors.New("disconnected")
+	if err := cli.writeJSONToConnection(conn, resp); err != nil {
+		logger.GetLogger().Errorf("SendDataFrameResponse error, conn nil or write failed, error=[%s]", err)
+		return err
 	}
-	return cli.conn.WriteJSON(resp)
+	return nil
 }
 
 // 通用注册函数
