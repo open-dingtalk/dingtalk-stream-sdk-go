@@ -48,17 +48,23 @@ type StreamClient struct {
 	proxy         string
 	keepAliveIdle time.Duration
 	writeTimeout  time.Duration
+	handlerSlots  chan struct{}
+	maxHandlers   int
 }
 
 type connectionContextKey struct{}
 
-const defaultWriteTimeout = 5 * time.Second
+const (
+	defaultWriteTimeout       = 5 * time.Second
+	defaultMaxPendingHandlers = 100
+)
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
 	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	cli := &StreamClient{
 		keepAliveIdle: 120 * time.Second,
 		writeTimeout:  defaultWriteTimeout,
+		maxHandlers:   defaultMaxPendingHandlers,
 		lifecycleCtx:  lifecycleCtx,
 		cancel:        cancel,
 	}
@@ -81,6 +87,7 @@ func NewStreamClient(options ...ClientOption) *StreamClient {
 
 		option(cli)
 	}
+	cli.handlerSlots = make(chan struct{}, cli.maxHandlers)
 
 	return cli
 }
@@ -137,6 +144,7 @@ func (cli *StreamClient) start(ctx context.Context, expectedLifecycle context.Co
 
 	conn, resp, err := dialer.DialContext(connectCtx, wssUrl, header)
 	if err != nil {
+		closeWebSocketDialResources(conn, resp)
 		return err
 	}
 
@@ -268,7 +276,7 @@ func (cli *StreamClient) processConnection(conn *websocket.Conn, keepAliveIdle t
 				logger.GetLogger().Errorf("connection process is closed")
 				return
 			}
-			go cli.processDataFrameForConnection(conn, msg)
+			cli.dispatchDataFrameForConnectionContext(loopCtx, conn, msg)
 
 		case <-idleTimer:
 			// Drain a stale pong signal from a previous round.
@@ -292,7 +300,7 @@ func (cli *StreamClient) processConnection(conn *websocket.Conn, keepAliveIdle t
 					logger.GetLogger().Errorf("connection process is closed")
 					return
 				}
-				go cli.processDataFrameForConnection(conn, msg)
+				cli.dispatchDataFrameForConnectionContext(loopCtx, conn, msg)
 			case <-time.After(pingWait):
 				logger.GetLogger().Errorf("ping time out, connection is closing")
 				_ = conn.Close()
@@ -389,7 +397,47 @@ func (cli *StreamClient) processDataFrame(rawData []byte) {
 	cli.processDataFrameForConnection(conn, rawData)
 }
 
+func (cli *StreamClient) dispatchDataFrameForConnection(conn *websocket.Conn, rawData []byte) {
+	cli.dispatchDataFrameForConnectionContext(context.Background(), conn, rawData)
+}
+
+func (cli *StreamClient) dispatchDataFrameForConnectionContext(
+	ctx context.Context,
+	conn *websocket.Conn,
+	rawData []byte,
+) {
+	select {
+	case cli.handlerSlots <- struct{}{}:
+		go func() {
+			defer func() {
+				<-cli.handlerSlots
+			}()
+			cli.processDataFrameForConnectionContext(ctx, conn, rawData)
+		}()
+	default:
+		dataFrame, err := payload.DecodeDataFrame(rawData)
+		if err == nil && dataFrame != nil && dataFrame.Type == utils.SubscriptionTypeKSystem {
+			// System frames control connection lifecycle and must not be starved
+			// by slow application handlers. Process them synchronously to keep
+			// control-frame work bounded even if the server sends a burst.
+			cli.processDataFrameForConnectionContext(ctx, conn, rawData)
+			return
+		}
+		logger.GetLogger().Warningf(
+			"connection handler capacity reached, message is left unacknowledged for retry",
+		)
+	}
+}
+
 func (cli *StreamClient) processDataFrameForConnection(conn *websocket.Conn, rawData []byte) {
+	cli.processDataFrameForConnectionContext(context.Background(), conn, rawData)
+}
+
+func (cli *StreamClient) processDataFrameForConnectionContext(
+	ctx context.Context,
+	conn *websocket.Conn,
+	rawData []byte,
+) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.GetLogger().Errorf("connection processDataFrame panic, error=[%s]", err)
@@ -413,7 +461,10 @@ func (cli *StreamClient) processDataFrameForConnection(conn *websocket.Conn, raw
 		// 没有注册handler，返回404
 		dataAck = payload.NewDataFrameResponse(payload.DataFrameResponseStatusCodeKHandlerNotFound)
 	} else {
-		frameContext := context.WithValue(context.Background(), connectionContextKey{}, conn)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		frameContext := context.WithValue(ctx, connectionContextKey{}, conn)
 		dataAck, err = frameHandler(frameContext, dataFrame)
 
 		if err != nil && dataAck == nil {
@@ -439,6 +490,21 @@ func (cli *StreamClient) processDataFrameForConnection(conn *websocket.Conn, raw
 
 	if errSend != nil {
 		logger.GetLogger().Errorf("connection processDataFrame send response error: error=[%s]", errSend)
+	}
+	if dataFrame.Type == utils.SubscriptionTypeKSystem && dataFrame.GetTopic() == "disconnect" {
+		// Acknowledge the server command on the source connection before
+		// closing it. Closing inside OnDisconnect makes the ACK write fail and
+		// causes the server to retry an already-processed disconnect command.
+		cli.closeOwnedConnection(conn)
+	}
+}
+
+func closeWebSocketDialResources(conn *websocket.Conn, resp *http.Response) {
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 }
 
@@ -663,11 +729,12 @@ func (cli *StreamClient) GetConnectionEndpoint(ctx context.Context) (*payload.Co
 func (cli *StreamClient) OnDisconnect(ctx context.Context, df *payload.DataFrame) (*payload.DataFrameResponse, error) {
 	logger.GetLogger().Debugf("StreamClient.OnDisconnect")
 
-	if conn, ok := ctx.Value(connectionContextKey{}).(*websocket.Conn); ok {
-		cli.closeOwnedConnection(conn)
-	} else {
-		cli.Close()
+	if ctx != nil {
+		if _, ok := ctx.Value(connectionContextKey{}).(*websocket.Conn); ok {
+			return nil, nil
+		}
 	}
+	cli.Close()
 	return nil, nil
 }
 
@@ -686,6 +753,12 @@ func (cli *StreamClient) OnPing(ctx context.Context, df *payload.DataFrame) (*pa
 
 // 返回正常数据包
 func (cli *StreamClient) SendDataFrameResponse(ctx context.Context, resp *payload.DataFrameResponse) error {
+	if ctx != nil {
+		if conn, ok := ctx.Value(connectionContextKey{}).(*websocket.Conn); ok {
+			return cli.sendDataFrameResponse(conn, resp)
+		}
+	}
+
 	cli.mutex.Lock()
 	conn := cli.conn
 	cli.mutex.Unlock()

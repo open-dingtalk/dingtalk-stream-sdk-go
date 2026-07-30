@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,6 +104,88 @@ func TestDingtalkOpenStreamClient_processDataFrame(t *testing.T) {
 	cli.Close()
 }
 
+func TestApplicationHandlerConcurrencyIsBounded(t *testing.T) {
+	cli := NewStreamClient(
+		WithAutoReconnect(false),
+		WithMaxPendingHandlers(5),
+	)
+	var handlerCalls int32
+	releaseHandlers := make(chan struct{})
+	cli.RegisterRouter(
+		utils.SubscriptionTypeKCallback,
+		"/slow",
+		func(context.Context, *payload.DataFrame) (*payload.DataFrameResponse, error) {
+			atomic.AddInt32(&handlerCalls, 1)
+			<-releaseHandlers
+			return payload.NewSuccessDataFrameResponse(), nil
+		},
+	)
+
+	for i := 0; i < 20; i++ {
+		raw := []byte(fmt.Sprintf(
+			`{"headers":{"messageId":"m-%d","topic":"/slow"},"type":"CALLBACK","data":"{}"}`,
+			i,
+		))
+		cli.dispatchDataFrameForConnection(nil, raw)
+	}
+
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&handlerCalls) == 5
+	}, time.Second, 10*time.Millisecond)
+	assert.Equal(t, int32(5), atomic.LoadInt32(&handlerCalls))
+
+	close(releaseHandlers)
+	require.Eventually(t, func() bool {
+		return len(cli.handlerSlots) == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestApplicationHandlerContextIsCanceledWithConnection(t *testing.T) {
+	cli := NewStreamClient(
+		WithAutoReconnect(false),
+		WithMaxPendingHandlers(1),
+	)
+	handlerStarted := make(chan struct{})
+	handlerCanceled := make(chan struct{})
+	cli.RegisterRouter(
+		utils.SubscriptionTypeKCallback,
+		"/cancel-aware",
+		func(ctx context.Context, _ *payload.DataFrame) (*payload.DataFrameResponse, error) {
+			close(handlerStarted)
+			<-ctx.Done()
+			close(handlerCanceled)
+			return nil, ctx.Err()
+		},
+	)
+
+	connectionCtx, cancelConnection := context.WithCancel(context.Background())
+	raw := []byte(
+		`{"headers":{"messageId":"cancel-1","topic":"/cancel-aware"},"type":"CALLBACK","data":"{}"}`,
+	)
+	cli.dispatchDataFrameForConnectionContext(connectionCtx, nil, raw)
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	cancelConnection()
+	select {
+	case <-handlerCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not observe connection cancellation")
+	}
+	require.Eventually(t, func() bool {
+		return len(cli.handlerSlots) == 0
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestCloseWebSocketDialResourcesClosesHandshakeResponse(t *testing.T) {
+	body := &trackingReadCloser{Reader: strings.NewReader("handshake failed")}
+	closeWebSocketDialResources(nil, &http.Response{Body: body})
+	assert.True(t, body.closed)
+}
+
 func TestDingtalkOpenStreamClient_Close(t *testing.T) {
 	cli := NewStreamClient(WithAutoReconnect(false))
 	cli.Close() // nil conn is safe
@@ -116,6 +199,16 @@ func TestDingtalkOpenStreamClient_Close(t *testing.T) {
 	assert.Nil(t, cli.conn)
 	assert.Equal(t, "", cli.sessionId)
 	cli.Close() // idempotent
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (body *trackingReadCloser) Close() error {
+	body.closed = true
+	return nil
 }
 
 func TestDingtalkOpenStreamClient_reconnect(t *testing.T) {
@@ -784,35 +877,50 @@ func TestCloseDoesNotWaitForBlockedWrite(t *testing.T) {
 
 func TestBlockedDataWriteDoesNotStallKeepAlive(t *testing.T) {
 	upgrader := websocket.Upgrader{}
-	releaseServer := make(chan struct{})
+	pingReceived := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		defer conn.Close()
-		// Do not read. The client's large data write fills the socket buffer.
-		<-releaseServer
+		conn.SetPingHandler(func(appData string) error {
+			select {
+			case pingReceived <- struct{}{}:
+			default:
+			}
+			return conn.WriteControl(
+				websocket.PongMessage,
+				[]byte(appData),
+				time.Now().Add(time.Second),
+			)
+		})
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
 	}))
 	defer server.Close()
-	defer close(releaseServer)
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL), nil)
 	require.NoError(t, err)
+	defer conn.Close()
 
 	cli := NewStreamClient(WithAutoReconnect(false))
 	cli.conn = conn
-	cli.writeTimeout = 250 * time.Millisecond
+	cli.writeTimeout = time.Second
 
-	writeStarted := make(chan struct{})
-	writeDone := make(chan struct{})
-	go func() {
-		close(writeStarted)
-		_ = cli.writeMessage(websocket.BinaryMessage, make([]byte, 64<<20))
-		close(writeDone)
+	// Holding writeMutex models an application data write that is blocked while
+	// owning the SDK's data-write lock. Keepalive control frames must not need
+	// that lock.
+	cli.writeMutex.Lock()
+	writeLockHeld := true
+	defer func() {
+		if writeLockHeld {
+			cli.writeMutex.Unlock()
+		}
 	}()
-	<-writeStarted
-	time.Sleep(50 * time.Millisecond)
 
 	processDone := make(chan struct{})
 	go func() {
@@ -821,14 +929,19 @@ func TestBlockedDataWriteDoesNotStallKeepAlive(t *testing.T) {
 	}()
 
 	select {
-	case <-processDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("keepalive stalled behind a blocked application write")
-	}
-	select {
-	case <-writeDone:
+	case <-pingReceived:
 	case <-time.After(time.Second):
-		t.Fatal("blocked application write did not exit after keepalive closed the connection")
+		t.Fatal("keepalive ping stalled behind the application write lock")
+	}
+
+	cli.writeMutex.Unlock()
+	writeLockHeld = false
+	require.NoError(t, conn.Close())
+
+	select {
+	case <-processDone:
+	case <-time.After(time.Second):
+		t.Fatal("connection processor did not exit after the connection closed")
 	}
 }
 
@@ -867,6 +980,47 @@ func TestProcessDataFrameResponseUsesSourceConnection(t *testing.T) {
 	select {
 	case message := <-newMessages:
 		t.Fatalf("old frame response leaked to replacement connection: %s", message)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestSendDataFrameResponseUsesContextConnection(t *testing.T) {
+	sourceMessages := make(chan string, 1)
+	sourceConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_, data, err := conn.ReadMessage()
+		if err == nil {
+			sourceMessages <- string(data)
+		}
+	})
+
+	replacementMessages := make(chan string, 1)
+	replacementConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_, data, err := conn.ReadMessage()
+		if err == nil {
+			replacementMessages <- string(data)
+		}
+	})
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = replacementConn
+	ctx := context.WithValue(context.Background(), connectionContextKey{}, sourceConn)
+	resp := payload.NewSuccessDataFrameResponse()
+	resp.SetHeader(payload.DataFrameHeaderKMessageId, "context-source")
+
+	require.NoError(t, cli.SendDataFrameResponse(ctx, resp))
+
+	select {
+	case message := <-sourceMessages:
+		assert.Contains(t, message, "context-source")
+	case <-time.After(time.Second):
+		t.Fatal("context-bound response was not written to the source connection")
+	}
+
+	select {
+	case message := <-replacementMessages:
+		t.Fatalf("context-bound response leaked to replacement connection: %s", message)
 	case <-time.After(100 * time.Millisecond):
 	}
 }
@@ -923,13 +1077,16 @@ func TestCloseCancelsReconnectBackoff(t *testing.T) {
 	}
 }
 
-func TestOldDisconnectFrameDoesNotCloseReplacementConnection(t *testing.T) {
+func TestDisconnectAckUsesSourceBeforeClosingWithoutClosingReplacement(t *testing.T) {
+	ackReceived := make(chan []byte, 1)
+	sourceClosed := make(chan struct{})
 	oldConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
+		_, message, err := conn.ReadMessage()
+		if err == nil {
+			ackReceived <- message
 		}
+		_, _, _ = conn.ReadMessage()
+		close(sourceClosed)
 	})
 	newConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
 		for {
@@ -943,9 +1100,24 @@ func TestOldDisconnectFrameDoesNotCloseReplacementConnection(t *testing.T) {
 	cli.conn = newConn
 	cli.sessionId = "replacement"
 
-	ctx := context.WithValue(context.Background(), connectionContextKey{}, oldConn)
-	_, err := cli.OnDisconnect(ctx, &payload.DataFrame{})
-	require.NoError(t, err)
+	raw := []byte(
+		`{"headers":{"messageId":"disconnect-1","topic":"disconnect"},"type":"SYSTEM","data":"{}"}`,
+	)
+	cli.processDataFrameForConnection(oldConn, raw)
+
+	select {
+	case ack := <-ackReceived:
+		var response payload.DataFrameResponse
+		require.NoError(t, json.Unmarshal(ack, &response))
+		assert.Equal(t, "disconnect-1", response.GetHeader(payload.DataFrameHeaderKMessageId))
+	case <-time.After(time.Second):
+		t.Fatal("disconnect ACK was not written to the source connection")
+	}
+	select {
+	case <-sourceClosed:
+	case <-time.After(time.Second):
+		t.Fatal("source connection was not closed after disconnect ACK")
+	}
 
 	cli.mutex.Lock()
 	currentConn := cli.conn

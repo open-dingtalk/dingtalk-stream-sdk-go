@@ -46,6 +46,18 @@ func WithKeepAlive(keepAliveIdle time.Duration) ClientOption {
 	}
 }
 
+// WithMaxPendingHandlers bounds concurrently running EVENT and CALLBACK
+// handlers. When the limit is reached, new application frames are left
+// unacknowledged so the server can retry them. Non-positive values use the
+// default limit of 100.
+func WithMaxPendingHandlers(maxHandlers int) ClientOption {
+	return func(client *StreamClient) {
+		if maxHandlers > 0 {
+			client.maxHandlers = maxHandlers
+		}
+	}
+}
+
 func WithUserAgent(ua *UserAgentConfig) ClientOption {
 	return func(c *StreamClient) {
 		if ua.Valid() != nil {
