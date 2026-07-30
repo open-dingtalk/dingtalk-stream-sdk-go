@@ -47,14 +47,18 @@ type StreamClient struct {
 	openApiHost   string
 	proxy         string
 	keepAliveIdle time.Duration
+	writeTimeout  time.Duration
 }
 
 type connectionContextKey struct{}
+
+const defaultWriteTimeout = 5 * time.Second
 
 func NewStreamClient(options ...ClientOption) *StreamClient {
 	lifecycleCtx, cancel := context.WithCancel(context.Background())
 	cli := &StreamClient{
 		keepAliveIdle: 120 * time.Second,
+		writeTimeout:  defaultWriteTimeout,
 		lifecycleCtx:  lifecycleCtx,
 		cancel:        cancel,
 	}
@@ -273,7 +277,7 @@ func (cli *StreamClient) processConnection(conn *websocket.Conn, keepAliveIdle t
 			default:
 			}
 
-			if err := cli.writeMessageToConnection(conn, websocket.PingMessage, nil); err != nil {
+			if err := cli.writeControlToConnection(conn, websocket.PingMessage, nil); err != nil {
 				logger.GetLogger().Errorf("connection write ping message error: error=[%s]", err)
 				return
 			}
@@ -332,7 +336,21 @@ func (cli *StreamClient) writeMessageToConnection(conn *websocket.Conn, messageT
 
 	cli.writeMutex.Lock()
 	defer cli.writeMutex.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(cli.getWriteTimeout())); err != nil {
+		return err
+	}
 	return conn.WriteMessage(messageType, data)
+}
+
+func (cli *StreamClient) writeControlToConnection(conn *websocket.Conn, messageType int, data []byte) error {
+	if conn == nil {
+		return errors.New("disconnected")
+	}
+
+	// Gorilla permits WriteControl concurrently with data writes. Keeping
+	// heartbeat control frames out of writeMutex ensures a blocked application
+	// write cannot prevent keepalive from timing out and closing the connection.
+	return conn.WriteControl(messageType, data, time.Now().Add(cli.getWriteTimeout()))
 }
 
 func (cli *StreamClient) writeJSON(v interface{}) error {
@@ -350,7 +368,17 @@ func (cli *StreamClient) writeJSONToConnection(conn *websocket.Conn, v interface
 
 	cli.writeMutex.Lock()
 	defer cli.writeMutex.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(cli.getWriteTimeout())); err != nil {
+		return err
+	}
 	return conn.WriteJSON(v)
+}
+
+func (cli *StreamClient) getWriteTimeout() time.Duration {
+	if cli.writeTimeout <= 0 {
+		return defaultWriteTimeout
+	}
+	return cli.writeTimeout
 }
 
 func (cli *StreamClient) processDataFrame(rawData []byte) {

@@ -782,6 +782,56 @@ func TestCloseDoesNotWaitForBlockedWrite(t *testing.T) {
 	}
 }
 
+func TestBlockedDataWriteDoesNotStallKeepAlive(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	releaseServer := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Do not read. The client's large data write fills the socket buffer.
+		<-releaseServer
+	}))
+	defer server.Close()
+	defer close(releaseServer)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(server.URL), nil)
+	require.NoError(t, err)
+
+	cli := NewStreamClient(WithAutoReconnect(false))
+	cli.conn = conn
+	cli.writeTimeout = 250 * time.Millisecond
+
+	writeStarted := make(chan struct{})
+	writeDone := make(chan struct{})
+	go func() {
+		close(writeStarted)
+		_ = cli.writeMessage(websocket.BinaryMessage, make([]byte, 64<<20))
+		close(writeDone)
+	}()
+	<-writeStarted
+	time.Sleep(50 * time.Millisecond)
+
+	processDone := make(chan struct{})
+	go func() {
+		cli.processConnection(conn, 20*time.Millisecond)
+		close(processDone)
+	}()
+
+	select {
+	case <-processDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("keepalive stalled behind a blocked application write")
+	}
+	select {
+	case <-writeDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked application write did not exit after keepalive closed the connection")
+	}
+}
+
 func TestProcessDataFrameResponseUsesSourceConnection(t *testing.T) {
 	oldMessages := make(chan string, 1)
 	oldConn := newTestWebsocketConn(t, func(conn *websocket.Conn) {
